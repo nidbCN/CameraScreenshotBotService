@@ -1,3 +1,4 @@
+using CameraScreenshotBotService.Helpers;
 using Lagrange.Core;
 using Lagrange.Core.Common;
 using Lagrange.Core.Common.Interface;
@@ -41,8 +42,8 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
             return null;
         }
 
-        using var keyStream = _isoStore.OpenFile(_devieInfoPath, FileMode.Open, FileAccess.Read);
-        return JsonSerializer.Deserialize<BotDeviceInfo>(keyStream);
+        using var infoStream = _isoStore.OpenFile(_devieInfoPath, FileMode.Open, FileAccess.Read);
+        return JsonSerializer.Deserialize<BotDeviceInfo>(infoStream);
     }
 
     private void SaveDeviceInfo(BotDeviceInfo deviceInfo)
@@ -52,8 +53,8 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
             _isoStore.CreateDirectory(AppDomain.CurrentDomain.FriendlyName);
         }
 
-        using var keyStream = _isoStore.OpenFile(_devieInfoPath, FileMode.OpenOrCreate, FileAccess.Write);
-        JsonSerializer.Serialize(keyStream, deviceInfo);
+        using var infoStream = _isoStore.OpenFile(_devieInfoPath, FileMode.OpenOrCreate, FileAccess.Write);
+        JsonSerializer.Serialize(infoStream, deviceInfo);
     }
 
     private BotKeystore? LoadKeyStore()
@@ -87,6 +88,7 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
         BotContext bot = null!;
         var keyStore = LoadKeyStore();
         if (keyStore is null)
+        // if (true)
         {
             // Ê×´ÎµÇÂ½
             bot = BotFactory.Create(new()
@@ -98,10 +100,18 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
 
             }, _deviceInfo, new BotKeystore());
 
-            var (_, bytes) = await bot.FetchQrCode() ?? throw new Exception(message: "NoQRCode");
+            var (_, codeImg) = await bot.FetchQrCode() ?? throw new Exception(message: "Fetch QRCode failed.");
 
-            await File.WriteAllBytesAsync("qrc.bmp", bytes, stoppingToken);
+            var codeImgFile = new FileInfo("./qrcode.png");
+            using var stream = codeImgFile.OpenWrite();
+            await stream.WriteAsync(codeImg, cancellationToken: stoppingToken);
+
+            _logger.LogInformation("Scan QRCode to login. QRCode image has been saved to {path}.", codeImgFile.FullName);
+
             await bot.LoginByQrCode();
+
+            codeImgFile.Delete();
+           
             SaveKeyStore(bot.UpdateKeystore());
         }
         else
@@ -160,8 +170,7 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
             _logger.LogInformation(messageChain[0].ToPreviewString());
         };
 
-
-        var privateMessageChain = MessageBuilder.Friend(951266436).Text("111").Build();
+        var privateMessageChain = MessageBuilder.Friend(3307954433).Text("111").Build();
         await bot.SendMessage(privateMessageChain);
 
         await Task.Delay(1000, stoppingToken);
