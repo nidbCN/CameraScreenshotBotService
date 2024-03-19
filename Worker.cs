@@ -1,22 +1,20 @@
-using CameraScreenshotBotService.Helpers;
+using CameraScreenshotBotService.Services;
 using Lagrange.Core;
 using Lagrange.Core.Common;
 using Lagrange.Core.Common.Interface;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
+using Lagrange.Core.Message.Entity;
 using Lagrange.OneBot.Utility;
-using System.IO.IsolatedStorage;
-using System.Text.Json;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, OneBotSigner signer) : BackgroundService
+public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService,OneBotSigner signer) : BackgroundService
 {
     private readonly ILogger<Worker> _logger = logger;
+    private readonly StorageService _storageService = storageService;
+    private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly OneBotSigner _signer = signer;
-
-    private readonly IsolatedStorageFile _isoStore = IsolatedStorageFile.GetStore(
-IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
 
     private readonly BotDeviceInfo _deviceInfo = new()
     {
@@ -27,66 +25,17 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
         KernelVersion = "10.0.19042.0"
     };
 
-    private readonly string _devieInfoPath = Path.Combine(AppDomain.CurrentDomain.FriendlyName, "deviceInfo.json");
-    private readonly string _keyStorePath = Path.Combine(AppDomain.CurrentDomain.FriendlyName, "key.json");
-
-    private BotDeviceInfo? LoadDeviceInfo()
-    {
-        if (!_isoStore.DirectoryExists(AppDomain.CurrentDomain.FriendlyName))
-        {
-            _isoStore.CreateDirectory(AppDomain.CurrentDomain.FriendlyName);
-        }
-
-        if (!_isoStore.FileExists(_devieInfoPath))
-        {
-            return null;
-        }
-
-        using var infoStream = _isoStore.OpenFile(_devieInfoPath, FileMode.Open, FileAccess.Read);
-        return JsonSerializer.Deserialize<BotDeviceInfo>(infoStream);
-    }
-
-    private void SaveDeviceInfo(BotDeviceInfo deviceInfo)
-    {
-        if (!_isoStore.DirectoryExists(AppDomain.CurrentDomain.FriendlyName))
-        {
-            _isoStore.CreateDirectory(AppDomain.CurrentDomain.FriendlyName);
-        }
-
-        using var infoStream = _isoStore.OpenFile(_devieInfoPath, FileMode.OpenOrCreate, FileAccess.Write);
-        JsonSerializer.Serialize(infoStream, deviceInfo);
-    }
-
-    private BotKeystore? LoadKeyStore()
-    {
-        if (!_isoStore.DirectoryExists(AppDomain.CurrentDomain.FriendlyName))
-        {
-            _isoStore.CreateDirectory(AppDomain.CurrentDomain.FriendlyName);
-        }
-
-        if (!_isoStore.FileExists(_keyStorePath))
-        {
-            return null;
-        }
-
-        using var keyStream = _isoStore.OpenFile(_keyStorePath, FileMode.Open, FileAccess.Read);
-        return JsonSerializer.Deserialize<BotKeystore>(keyStream);
-    }
-    private void SaveKeyStore(BotKeystore keyStore)
-    {
-        if (!_isoStore.DirectoryExists(AppDomain.CurrentDomain.FriendlyName))
-        {
-            _isoStore.CreateDirectory(AppDomain.CurrentDomain.FriendlyName);
-        }
-
-        using var keyStream = _isoStore.OpenFile(_keyStorePath, FileMode.OpenOrCreate, FileAccess.Write);
-        JsonSerializer.Serialize(keyStream, keyStore);
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+
+        var r = _screenshotService.TryDecodeNextKeyFrame(out var f);
+
+        _screenshotService.SaveFrameAsPNG(f, "test.png");
+
+        return;
+
         BotContext bot = null!;
-        var keyStore = LoadKeyStore();
+        var keyStore = _storageService.LoadKeyStore();
         if (keyStore is null)
         // if (true)
         {
@@ -111,8 +60,8 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
             await bot.LoginByQrCode();
 
             codeImgFile.Delete();
-           
-            SaveKeyStore(bot.UpdateKeystore());
+
+            _storageService.SaveKeyStore(bot.UpdateKeystore());
         }
         else
         {
@@ -125,7 +74,7 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
             await bot.LoginByPassword();
         }
 
-        SaveKeyStore(bot.UpdateKeystore());
+        _storageService.SaveKeyStore(bot.UpdateKeystore());
 
         bot.Invoker.OnBotLogEvent += (_, @event) =>
         {
@@ -162,6 +111,12 @@ IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null);
         {
             var messageChain = @event.Chain;
             _logger.LogInformation(messageChain[0].ToPreviewString());
+            var textMessage = messageChain.Select(m => m as TextEntity);
+            if (textMessage.Any(text => text?.ToPreviewString().StartsWith("") ?? false))
+            {
+
+            }
+
         };
 
         bot.Invoker.OnFriendMessageReceived += (_, @event) =>
