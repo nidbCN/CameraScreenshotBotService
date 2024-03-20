@@ -210,7 +210,7 @@ public sealed unsafe class ScreenshotService
         AVFrame* imageFrame = ffmpeg.av_frame_alloc();
         imageFrame->width = frame->width;
         imageFrame->height = frame->height;
-        imageFrame->format = (int)sourcePixelFormat;
+        imageFrame->format = (int)destPixelFormat;
         ffmpeg.av_frame_get_buffer(imageFrame, 32); // 分配内存
 
         // 将 AVFrame 数据复制到 pngFrame
@@ -227,73 +227,74 @@ public sealed unsafe class ScreenshotService
 
         ffmpeg.avcodec_send_frame(_encoderCtx, imageFrame).ThrowExceptionIfError();
 
-        // 编码并保存为 PNG 文件
-        using (var outFile = File.OpenWrite("temp.png"))
+        using var memStream = new MemoryStream();
+
+
+        int ret = 0;
+        var offset = 0;
+
+        do
         {
-            int ret = 0;
-            var offset = 0;
+            ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
 
-            do
+            if (ret >= 0)
             {
-                ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+                // 正常
+                _logger.LogInformation("Receive packet with size {s}", _pPacket->size);
 
-                if (ret >= 0)
+                var buffer = new byte[_pPacket->size];
+                Marshal.Copy((IntPtr)_pPacket->data, buffer, 0, _pPacket->size);
+                memStream.Write(buffer, offset, _pPacket->size);
+
+                ffmpeg.av_packet_unref(_pPacket);
+            }
+            else if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            {
+                // -11
+                _logger.LogWarning("Receive -11, send EOF and skip");
+                // ret = ffmpeg.avcodec_send_packet(codecCtx, );
+                ffmpeg.avcodec_send_frame(_encoderCtx, null).ThrowExceptionIfError();
+                do
                 {
-                    // 正常
-                    _logger.LogInformation("Receive packet with size {s}", _pPacket->size);
+                    ffmpeg.av_packet_unref(_pPacket);
+                    ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
 
-                    var buffer = new byte[_pPacket->size];
-                    Marshal.Copy((IntPtr)_pPacket->data, buffer, 0, _pPacket->size);
-                    outFile.Write(buffer, offset, _pPacket->size);
+                    if (ret >= 0)
+                    {
+                        byte[] buffer2 = new byte[_pPacket->size];
+                        Marshal.Copy((IntPtr)_pPacket->data, buffer2, 0, _pPacket->size);
+                        _logger.LogInformation("EOF send and recv, size {s}", _pPacket->size);
+                        memStream.Write(buffer2, 0, _pPacket->size);
+                    }
+                    else
+                    {
+                        _logger.LogError("EOF send and recv err, msg {m}", FFMpegExtension.av_strerror(ret));
+                    }
 
                     ffmpeg.av_packet_unref(_pPacket);
-                }
-                else if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-                {
-                    // -11
-                    _logger.LogWarning("Receive -11, send EOF and skip");
-                    // ret = ffmpeg.avcodec_send_packet(codecCtx, );
-                    ffmpeg.avcodec_send_frame(_encoderCtx, null).ThrowExceptionIfError();
-                    do
-                    {
-                        ffmpeg.av_packet_unref(_pPacket);
-                        ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+                } while (ret >= 0);
 
-                        if (ret >= 0)
-                        {
-                            byte[] buffer2 = new byte[_pPacket->size];
-                            Marshal.Copy((IntPtr)_pPacket->data, buffer2, 0, _pPacket->size);
-                            _logger.LogInformation("EOF send and recv, size {s}", _pPacket->size);
-                            outFile.Write(buffer2, 0, _pPacket->size);
-                        }
-                        else
-                        {
-                            _logger.LogError("EOF send and recv err, msg {m}", FFMpegExtension.av_strerror(ret));
-                        }
+                continue;
+            }
+            else if (ret == ffmpeg.AVERROR_EOF)
+            {
+                break;
+            }
+            else
+            {
+                _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
+            }
+        } while (ret >= 0);
 
-                        ffmpeg.av_packet_unref(_pPacket);
-                    } while (ret >= 0);
-
-                    continue;
-                }
-                else if (ret == ffmpeg.AVERROR_EOF)
-                {
-                    break;
-                }
-                else
-                {
-                    _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
-                }
-            } while (ret >= 0);
-        }
 
         // 释放资源
         ffmpeg.av_frame_free(&imageFrame);
         // 取消引用
         ffmpeg.av_packet_unref(_pPacket);
 
-        //temp
-        return false;
+        // result
+        image = memStream.ToArray();
+        return true;
     }
 
     public IReadOnlyDictionary<string, string?>? GetContextInfo()
