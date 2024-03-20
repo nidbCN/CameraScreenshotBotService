@@ -1,6 +1,12 @@
 using Lagrange.OneBot.Utility;
 using CameraScreenshotBotService;
 using CameraScreenshotBotService.Services;
+using FFmpeg.AutoGen;
+using System.Runtime.InteropServices;
+
+ffmpeg.RootPath = "C:\\Users\\Gaein\\scoop\\apps\\ffmpeg-shared\\6.1.1\\bin";
+
+DynamicallyLoadedBindings.Initialize();
 
 var builder = Host.CreateApplicationBuilder(args);
 

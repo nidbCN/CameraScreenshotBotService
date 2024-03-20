@@ -1,18 +1,13 @@
 using CameraScreenshotBotService.Services;
-using Lagrange.Core;
 using Lagrange.Core.Common;
-using Lagrange.Core.Common.Interface;
-using Lagrange.Core.Common.Interface.Api;
-using Lagrange.Core.Message;
-using Lagrange.Core.Message.Entity;
 using Lagrange.OneBot.Utility;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService,OneBotSigner signer) : BackgroundService
+public class Worker(ILogger<Worker> logger, /*StorageService storageService,*/ ScreenshotService screenshotService, OneBotSigner signer) : BackgroundService
 {
     private readonly ILogger<Worker> _logger = logger;
-    private readonly StorageService _storageService = storageService;
+    // private readonly StorageService _storageService = storageService;
     private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly OneBotSigner _signer = signer;
 
@@ -27,13 +22,48 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Console.Out.WriteLineAsync("async out, work started");
 
-        var r = _screenshotService.TryDecodeNextKeyFrame(out var f);
+        await Task.Delay(2000);
 
-        _screenshotService.SaveFrameAsPNG(f, "test.png");
+        var r = _screenshotService.TryCapturePngImage(out var bs);
+
+        if (!r)
+        {
+            _logger.LogError("Decode Failed");
+        }
+
+
+        //unsafe
+        //{
+        //    var l = (f.data)[0];
+        //    var h = 480; var w = 640;
+        //    var warp = f.linesize[0];
+        //    var data = new byte[warp * h];
+        //    Marshal.Copy((IntPtr)l, data, 0, warp * h);
+
+        //    var file = new FileInfo("testg.pgm");
+
+        //    using var fs = file.OpenWrite();
+
+        //    var head = "P5\n640 480\n255\n";
+
+        //    var headB = Encoding.ASCII.GetBytes(head);
+
+        //    fs.Write(headB);
+
+        //    for (int i = 0; i < h; i++)
+        //    {
+        //        fs.Write(data, i*warp, w);
+        //    }
+
+        //    fs.Close();
+
+        //}
 
         return;
 
+        /*
         BotContext bot = null!;
         var keyStore = _storageService.LoadKeyStore();
         if (keyStore is null)
@@ -129,6 +159,7 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
         await bot.SendMessage(privateMessageChain);
 
         await Task.Delay(1000, stoppingToken);
+        */
     }
 }
 
