@@ -34,7 +34,12 @@ public sealed unsafe class ScreenshotService
         _inputFormatCtx = ffmpeg.avformat_alloc_context();
         _receivedFrame = ffmpeg.av_frame_alloc();
         var fotmatCtx = _inputFormatCtx;
-        ffmpeg.avformat_open_input(&fotmatCtx, url, null, null).ThrowExceptionIfError();
+
+        // 设置超时
+        AVDictionary* openOptions = null;
+        ffmpeg.av_dict_set(&openOptions, "stimeout", "3", 0);
+
+        ffmpeg.avformat_open_input(&fotmatCtx, url, null, &openOptions).ThrowExceptionIfError();
         ffmpeg.avformat_find_stream_info(_inputFormatCtx, null).ThrowExceptionIfError();
 
         // 初始化解码器
@@ -233,7 +238,7 @@ public sealed unsafe class ScreenshotService
         // 转换
         ffmpeg.sws_scale(_pixConverterCtx, frame->data, frame->linesize, 0,
                   height, imageFrame->data, imageFrame->linesize);
-        
+
         // 开始编码
         ffmpeg.avcodec_send_frame(_encoderCtx, imageFrame);
 
@@ -264,44 +269,17 @@ public sealed unsafe class ScreenshotService
                 {
                     _logger.LogWarning("Encode failed! {msg}", FFMpegExtension.av_strerror(ret));
                     result = false;
-                } else
+                }
+                else
                 {
                     _logger.LogInformation("Save packet with size {s} to buffer.", _pPacket->size);
                     WriteToStream(memStream, _pPacket);
-                    
+
                 }
 
                 ffmpeg.av_packet_unref(_pPacket);
             }
         }
-
-        //do
-        //{
-        //    ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
-
-        //    if (ret >= 0)
-        //    {
-        //        // 正常
-        //        WritePacketToStream(memStream, _pPacket);
-
-        //        ffmpeg.av_packet_unref(_pPacket);
-        //    }
-        //    else if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-        //    {
-        //        // -11 资源暂不可用
-        //        _logger.LogWarning("Receive -11, send EOF and skip");
-        //    }
-        //    else if (ret == ffmpeg.AVERROR_EOF)
-        //    {
-        //        // EOF
-        //        return true;
-        //    }
-        //    else
-        //    {
-        //        _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
-
-        //    }
-        //} while (ret >= 0);
 
         // 释放资源
         ffmpeg.av_frame_free(&imageFrame);
