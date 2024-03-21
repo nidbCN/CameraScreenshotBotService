@@ -10,16 +10,19 @@ public sealed unsafe class ScreenshotService
 {
     private readonly ILogger<ScreenshotService> _logger;
     private readonly IConfiguration _config;
+    private readonly string _url;
 
     private readonly SwsContext* _pixConverterCtx;
 
     private readonly AVCodecContext* _decoderCtx;
     private readonly AVCodecContext* _encoderCtx;
 
-    private readonly AVFormatContext* _inputFormatCtx;
+    private AVFormatContext* _inputFormatCtx;
+    private AVDictionary* _openOptions;
+
     private readonly AVFrame* _inputFrame;
     private readonly AVPacket* _pPacket;
-    private readonly AVFrame* _receivedFrame;
+    private AVFrame* _receivedFrame;
 
     private readonly int _streamIndex;
 
@@ -28,18 +31,16 @@ public sealed unsafe class ScreenshotService
         _logger = logger;
         _config = config;
 
-        var url = config["Camera:Url"] ?? throw new ArgumentNullException("CameraUrl");
-
-        // 初始化 ffmpeg 输入
-        _inputFormatCtx = ffmpeg.avformat_alloc_context();
-        _receivedFrame = ffmpeg.av_frame_alloc();
-        var fotmatCtx = _inputFormatCtx;
+        _url = config["Camera:Url"] ?? throw new ArgumentNullException("CameraUrl");
 
         // 设置超时
         AVDictionary* openOptions = null;
-        ffmpeg.av_dict_set(&openOptions, "stimeout", "3", 0);
+        ffmpeg.av_dict_set(&openOptions, "timeout", "3000", 0);
+        _openOptions = openOptions;
 
-        ffmpeg.avformat_open_input(&fotmatCtx, url, null, &openOptions).ThrowExceptionIfError();
+        // 初始化 ffmpeg 输入
+        OpenInput();
+
         ffmpeg.avformat_find_stream_info(_inputFormatCtx, null).ThrowExceptionIfError();
 
         // 初始化解码器
@@ -60,6 +61,8 @@ public sealed unsafe class ScreenshotService
             StreamWidth = _decoderCtx->width;
             StreamHeight = _decoderCtx->height;
         }
+
+        CloseInput();
 
         // 初始化 PNG 编码器
         {
@@ -89,44 +92,71 @@ public sealed unsafe class ScreenshotService
 
         // 设置日志
         {
-            ffmpeg.av_log_set_level(config["Camera:Log"]?.ToUpper() switch
-            {
-                "DEBUG" => ffmpeg.AV_LOG_DEBUG,
-                "WARNING" => ffmpeg.AV_LOG_WARNING,
-                "ERROR" => ffmpeg.AV_LOG_ERROR,
-                _ => ffmpeg.AV_LOG_INFO
-            });
+            //ffmpeg.av_log_set_level(config["Camera:Log"]?.ToUpper() switch
+            //{
+            //    "DEBUG" => ffmpeg.AV_LOG_DEBUG,
+            //    "WARNING" => ffmpeg.AV_LOG_WARNING,
+            //    "ERROR" => ffmpeg.AV_LOG_ERROR,
+            //    _ => ffmpeg.AV_LOG_INFO
+            //});
 
             //// do not convert to local function
-            av_log_set_callback_callback logCallback = (p0, level, format, vl) =>
-            {
-                if (level > ffmpeg.av_log_get_level()) return;
+            //av_log_set_callback_callback logCallback = (p0, level, format, vl) =>
+            //{
+            //    if (level > ffmpeg.av_log_get_level()) return;
 
-                var lineSize = 1024;
-                var lineBuffer = stackalloc byte[lineSize];
-                var printPrefix = 1;
-                ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
-                var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
+            //    var lineSize = 1024;
+            //    var lineBuffer = stackalloc byte[lineSize];
+            //    var printPrefix = 1;
+            //    ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
+            //    var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
 
-                switch (level)
-                {
-                    case ffmpeg.AV_LOG_DEBUG:
-                        _logger.LogDebug(line);
-                        break;
-                    case ffmpeg.AV_LOG_WARNING:
-                        _logger.LogWarning(line);
-                        break;
-                    case ffmpeg.AV_LOG_INFO:
-                        _logger.LogInformation(line);
-                        break;
-                    default:
-                        _logger.LogInformation(line);
-                        break;
-                }
-            };
+            //    switch (level)
+            //    {
+            //        case ffmpeg.AV_LOG_DEBUG:
+            //            _logger.LogDebug(line);
+            //            break;
+            //        case ffmpeg.AV_LOG_WARNING:
+            //            _logger.LogWarning(line);
+            //            break;
+            //        case ffmpeg.AV_LOG_INFO:
+            //            _logger.LogInformation(line);
+            //            break;
+            //        default:
+            //            _logger.LogInformation(line);
+            //            break;
+            //    }
+            //};
 
             // ffmpeg.av_log_set_callback(logCallback);
         }
+    }
+
+    public void OpenInput()
+    {
+        _logger.LogInformation("Open Input.");
+
+        // 初始化 ffmpeg 输入
+        _inputFormatCtx = ffmpeg.avformat_alloc_context();
+        _receivedFrame = ffmpeg.av_frame_alloc();
+        var fotmatCtx = _inputFormatCtx;
+
+        // 设置超时
+        var openOptions = _openOptions;
+
+        // 打开流
+        ffmpeg.avformat_open_input(&fotmatCtx, _url, null, null).ThrowExceptionIfError();
+    }
+
+    public void CloseInput()
+    {
+        _logger.LogInformation("Close Input.");
+
+        var inputFormatCtx = _inputFormatCtx;
+        ffmpeg.avformat_close_input(&inputFormatCtx);
+
+        ffmpeg.av_frame_unref(_inputFrame);
+        ffmpeg.av_frame_unref(_receivedFrame);
     }
 
     public string StreamCodecName { get; }

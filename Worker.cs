@@ -6,6 +6,8 @@ using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
 using Lagrange.OneBot.Utility;
+using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace CameraScreenshotBotService;
 
@@ -102,60 +104,22 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
 
         bot.Invoker.OnGroupMessageReceived += async (_, @event) =>
         {
-            var messageChain = @event.Chain;
-            var textMessage = messageChain.Select(m =>
-            {
-                if (m is TextEntity text)
-                {
-                    return text;
-                }
-                return null;
-            }).Where(m => m != null);
-            if (textMessage.Any(text =>
-            {
-                var textStr = text?.Text;
-                return textStr?.StartsWith("see") ?? false;
-            }))
-            {
-                var captureResult = _screenshotService.TryCapturePngImage(out var bs);
 
-                if (!captureResult)
-                {
-                    _logger.LogError("Decode Failed");
-                }
-                else
-                {
-                    MessageBuilder imageMessage = null;
-
-                    if (bs is null)
-                    {
-                        imageMessage = MessageBuilder
-                        .Group(@event.Chain.GroupUin!.Value)
-                        .Text("±‡¬Î¥Û ß∞‹");
-                    }
-                    else
-                    {
-                        imageMessage = MessageBuilder
-                            .Group(@event.Chain.GroupUin!.Value)
-                            .Image(bs);
-                    }
-                    await bot.SendMessage(imageMessage.Build());
-                }
-            }
         };
 
         bot.Invoker.OnFriendMessageReceived += async (_, @event) =>
         {
             var messageChain = @event.Chain;
+
+            _logger.LogInformation("Receive friend message: {json}",
+                JsonSerializer.Serialize(messageChain.Select(m => m.ToPreviewString())));
+
             var textMessage = messageChain.Select(m =>
             {
                 if (m is TextEntity text)
                 {
                     return text;
                 }
-
-                var t = (m as TextEntity);
-
                 return null;
             }).Where(m => m != null);
             if (textMessage.Any(text =>
@@ -164,19 +128,41 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 return textStr?.StartsWith("see") ?? false;
             }))
             {
-                var captureResult = _screenshotService.TryCapturePngImage(out var bs);
-
-                if (!captureResult)
+                try
                 {
-                    _logger.LogError("Decode Failed");
+                    _screenshotService.OpenInput();
+                    var captureResult = _screenshotService.TryCapturePngImage(out var bs);
+
+                    if (!captureResult)
+                    {
+                        _logger.LogError("Decode Failed");
+                    }
+                    else
+                    {
+                        MessageBuilder imageMessage = null;
+
+                        if (bs is null)
+                        {
+                            imageMessage = MessageBuilder
+                            .Friend(@event.Chain.FriendUin)
+                            .Text("±‡¬Î¥Û ß∞‹");
+                        }
+                        else
+                        {
+                            imageMessage = MessageBuilder
+                                .Friend(@event.Chain.FriendUin)
+                                .Image(bs);
+                        }
+                        await bot.SendMessage(imageMessage.Build());
+                    }
                 }
-                else
+                catch (ApplicationException e)
                 {
-                    var imageMessage = MessageBuilder
-                        .Friend(messageChain.FriendUin)
-                        .Image(bs);
-
-                    await bot.SendMessage(imageMessage.Build());
+                    _logger.LogError(e.Message);
+                }
+                finally
+                {
+                    _screenshotService.CloseInput();
                 }
             }
         };
