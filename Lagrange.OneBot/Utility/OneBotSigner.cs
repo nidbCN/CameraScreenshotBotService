@@ -6,15 +6,13 @@ using System.Text.Json.Nodes;
 using Lagrange.Core.Utility.Extension;
 using Lagrange.Core.Utility.Network;
 using Lagrange.Core.Utility.Sign;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
 namespace Lagrange.OneBot.Utility;
 
 public class OneBotSigner : SignProvider
 {
     private readonly string _signServer;
-    private readonly ILogger _logger;
+    private readonly ILogger<OneBotSigner> _logger;
     private readonly Timer _timer;
 
     private readonly HttpClient _client;

@@ -6,17 +6,17 @@ using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
 using Lagrange.OneBot.Utility;
-using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService, OneBotSigner signer) : BackgroundService
+public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService, OneBotSigner signer, IConfiguration config) : BackgroundService
 {
     private readonly ILogger<Worker> _logger = logger;
     private readonly StorageService _storageService = storageService;
     private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly OneBotSigner _signer = signer;
+    // private readonly IList<uint> _allowGroups = JsonSerializer.Deserialize<IList<uint>>(config["AllowGroups"]);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -104,65 +104,86 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
 
         bot.Invoker.OnGroupMessageReceived += async (_, @event) =>
         {
-
-        };
-
-        bot.Invoker.OnFriendMessageReceived += async (_, @event) =>
-        {
-            var messageChain = @event.Chain;
+            var recvMessages = @event.Chain;
 
             _logger.LogInformation("Receive friend message: {json}",
-                JsonSerializer.Serialize(messageChain.Select(m => m.ToPreviewString())));
+                JsonSerializer.Serialize(recvMessages.Select(m => m.ToPreviewString())));
 
-            var textMessage = messageChain.Select(m =>
+            var textMessages = recvMessages
+                .Select(m => m as TextEntity)
+                .Where(m => m != null);
+
+            if (textMessages.Any(m => m?.Text?.StartsWith("ÈÃÎÒ¿µ¿µ") ?? false))
             {
-                if (m is TextEntity text)
-                {
-                    return text;
-                }
-                return null;
-            }).Where(m => m != null);
-            if (textMessage.Any(text =>
-            {
-                var textStr = text?.Text;
-                return textStr?.StartsWith("see") ?? false;
-            }))
-            {
+                var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
+
                 try
                 {
                     _screenshotService.OpenInput();
-                    var captureResult = _screenshotService.TryCapturePngImage(out var bs);
+                    var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
 
-                    if (!captureResult)
+                    if (!captureResult || imageBytes is null)
                     {
-                        _logger.LogError("Decode Failed");
+                        _logger.LogError("Decode failed, send error message.");
+                        sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂëÊ§°Ü£©");
                     }
                     else
                     {
-                        MessageBuilder imageMessage = null;
-
-                        if (bs is null)
-                        {
-                            imageMessage = MessageBuilder
-                            .Friend(@event.Chain.FriendUin)
-                            .Text("±àÂë´óÊ§°Ü");
-                        }
-                        else
-                        {
-                            imageMessage = MessageBuilder
-                                .Friend(@event.Chain.FriendUin)
-                                .Image(bs);
-                        }
-                        await bot.SendMessage(imageMessage.Build());
+                        sendMessage.Image(imageBytes);
                     }
                 }
                 catch (ApplicationException e)
                 {
-                    _logger.LogError(e.Message);
+                    _logger.LogError("Faile to decode and encode, {error}", e.Message);
+                    sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂë±ÀÀ££©");
                 }
                 finally
                 {
                     _screenshotService.CloseInput();
+                    await bot.SendMessage(sendMessage.Build());
+                }
+            }
+        };
+
+        bot.Invoker.OnFriendMessageReceived += async (_, @event) =>
+        {
+            var recvMessages = @event.Chain;
+
+            _logger.LogInformation("Receive friend message: {json}",
+                JsonSerializer.Serialize(recvMessages.Select(m => m.ToPreviewString())));
+
+            var textMessages = recvMessages
+                .Select(m => m as TextEntity)
+                .Where(m => m != null);
+
+            if (textMessages.Any(m => m?.Text?.StartsWith("ÈÃÎÒ¿µ¿µ") ?? false))
+            {
+                var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
+
+                try
+                {
+                    _screenshotService.OpenInput();
+                    var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
+
+                    if (!captureResult || imageBytes is null)
+                    {
+                        _logger.LogError("Decode failed, send error message.");
+                        sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂëÊ§°Ü£©");
+                    }
+                    else
+                    {
+                        sendMessage.Image(imageBytes);
+                    }
+                }
+                catch (ApplicationException e)
+                {
+                    _logger.LogError("Faile to decode and encode, {error}", e.Message);
+                    sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂë±ÀÀ££©");
+                }
+                finally
+                {
+                    _screenshotService.CloseInput();
+                    await bot.SendMessage(sendMessage.Build());
                 }
             }
         };
