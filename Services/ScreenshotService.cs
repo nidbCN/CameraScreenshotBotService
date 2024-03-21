@@ -11,6 +11,8 @@ public sealed unsafe class ScreenshotService
     private readonly ILogger<ScreenshotService> _logger;
     private readonly IConfiguration _config;
 
+    private readonly SwsContext* _pixConverterCtx;
+
     private readonly AVCodecContext* _decoderCtx;
     private readonly AVCodecContext* _encoderCtx;
 
@@ -18,6 +20,7 @@ public sealed unsafe class ScreenshotService
     private readonly AVFrame* _inputFrame;
     private readonly AVPacket* _pPacket;
     private readonly AVFrame* _receivedFrame;
+
     private readonly int _streamIndex;
 
     public ScreenshotService(ILogger<ScreenshotService> logger, IConfiguration config)
@@ -59,14 +62,21 @@ public sealed unsafe class ScreenshotService
             _encoderCtx = ffmpeg.avcodec_alloc_context3(encoder);
 
             // 设置编码器参数
-            _encoderCtx->width = _decoderCtx->width;
-            _encoderCtx->height = _decoderCtx->height;
+            _encoderCtx->width = StreamWidth;
+            _encoderCtx->height = StreamHeight;
             _encoderCtx->time_base = new AVRational { num = 1, den = 25 }; // 设置时间基准
             _encoderCtx->framerate = new AVRational { num = 25, den = 1 };
             _encoderCtx->pix_fmt = AVPixelFormat.AV_PIX_FMT_RGB24;
 
             // 打开编码器
             ffmpeg.avcodec_open2(_encoderCtx, encoder, null).ThrowExceptionIfError();
+        }
+
+        {
+            // 初始化 SwsContext
+            _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight, _decoderCtx->pix_fmt,
+                              StreamWidth, StreamHeight, _encoderCtx->pix_fmt,
+                              ffmpeg.SWS_BICUBIC, null, null, null);
         }
 
         _pPacket = ffmpeg.av_packet_alloc();
@@ -130,6 +140,8 @@ public sealed unsafe class ScreenshotService
         ffmpeg.avcodec_close(_decoderCtx);
         var pFormatContext = _inputFormatCtx;
         ffmpeg.avformat_close_input(&pFormatContext);
+
+        ffmpeg.sws_freeContext(_pixConverterCtx);
     }
 
     public bool TryDecodeNextKeyFrame(out AVFrame* frame)
@@ -196,6 +208,7 @@ public sealed unsafe class ScreenshotService
 
     public bool TryCapturePngImage(out byte[]? image)
     {
+        var result = false;
         image = null;
 
         if (!TryDecodeNextKeyFrame(out var frame))
@@ -210,7 +223,7 @@ public sealed unsafe class ScreenshotService
         var imageFrame = ffmpeg.av_frame_alloc();
         imageFrame->width = frame->width;
         imageFrame->height = frame->height;
-        // imageFrame->format = (int)destPixelFormat;
+        imageFrame->format = (int)destPixelFormat;
         ffmpeg.av_frame_get_buffer(imageFrame, 32); // 分配内存
 
         // 将 AVFrame 数据复制到 pngFrame
@@ -218,82 +231,92 @@ public sealed unsafe class ScreenshotService
         ffmpeg.av_frame_copy_props(imageFrame, frame);
 
         // 转换
-        var scaleCxt = ffmpeg.sws_getContext(width, height, sourcePixelFormat,
-                                  width, height, destPixelFormat,
-                                  ffmpeg.SWS_BICUBIC, null, null, null);
-        ffmpeg.sws_scale(scaleCxt, frame->data, frame->linesize, 0,
+        ffmpeg.sws_scale(_pixConverterCtx, frame->data, frame->linesize, 0,
                   height, imageFrame->data, imageFrame->linesize);
-        ffmpeg.sws_freeContext(scaleCxt);
-
+        
+        // 开始编码
         ffmpeg.avcodec_send_frame(_encoderCtx, imageFrame);
 
         using var memStream = new MemoryStream();
 
-
-        int ret = 0;
-        var offset = 0;
-
-        do
+        int ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+        if (ret < 0)
         {
-            ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+            // 首次编码出现 EOF 等，不正常
+            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(ret));
+            result = false;
+        }
+        else
+        {
+            _logger.LogInformation("Save packet with size {s} to buffer.", _pPacket->size);
+            WriteToStream(memStream, _pPacket);
+            ffmpeg.av_packet_unref(_pPacket);
 
-            if (ret >= 0)
+            while (ret >= 0)
             {
-                // 正常
-                _logger.LogInformation("Receive packet with size {s}", _pPacket->size);
-
-                var buffer = new byte[_pPacket->size];
-                Marshal.Copy((IntPtr)_pPacket->data, buffer, 0, _pPacket->size);
-                memStream.Write(buffer, offset, _pPacket->size);
+                ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+                if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
+                {
+                    // 没有更多数据，正常结束
+                    result = true;
+                }
+                else if (ret < 0)
+                {
+                    _logger.LogWarning("Encode failed! {msg}", FFMpegExtension.av_strerror(ret));
+                    result = false;
+                } else
+                {
+                    _logger.LogInformation("Save packet with size {s} to buffer.", _pPacket->size);
+                    WriteToStream(memStream, _pPacket);
+                    
+                }
 
                 ffmpeg.av_packet_unref(_pPacket);
             }
-            else if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-            {
-                // -11
-                _logger.LogWarning("Receive -11, send EOF and skip");
-                // ret = ffmpeg.avcodec_send_packet(codecCtx, );
-                ffmpeg.avcodec_send_frame(_encoderCtx, null).ThrowExceptionIfError();
-                do
-                {
-                    ffmpeg.av_packet_unref(_pPacket);
-                    ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+        }
 
-                    if (ret >= 0)
-                    {
-                        byte[] buffer2 = new byte[_pPacket->size];
-                        Marshal.Copy((IntPtr)_pPacket->data, buffer2, 0, _pPacket->size);
-                        _logger.LogInformation("EOF send and recv, size {s}", _pPacket->size);
-                        memStream.Write(buffer2, 0, _pPacket->size);
-                    }
-                    else
-                    {
-                        _logger.LogError("EOF send and recv err, msg {m}", FFMpegExtension.av_strerror(ret));
-                    }
+        //do
+        //{
+        //    ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
 
-                    ffmpeg.av_packet_unref(_pPacket);
-                } while (ret >= 0);
+        //    if (ret >= 0)
+        //    {
+        //        // 正常
+        //        WritePacketToStream(memStream, _pPacket);
 
-                continue;
-            }
-            else if (ret == ffmpeg.AVERROR_EOF)
-            {
-                break;
-            }
-            else
-            {
-                _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
-            }
-        } while (ret >= 0);
+        //        ffmpeg.av_packet_unref(_pPacket);
+        //    }
+        //    else if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+        //    {
+        //        // -11 资源暂不可用
+        //        _logger.LogWarning("Receive -11, send EOF and skip");
+        //    }
+        //    else if (ret == ffmpeg.AVERROR_EOF)
+        //    {
+        //        // EOF
+        //        return true;
+        //    }
+        //    else
+        //    {
+        //        _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
+
+        //    }
+        //} while (ret >= 0);
 
         // 释放资源
         ffmpeg.av_frame_free(&imageFrame);
-        // 取消引用
-        ffmpeg.av_packet_unref(_pPacket);
 
         // result
         image = memStream.ToArray();
-        return true;
+        memStream.Close();
+        return result;
+    }
+
+    private static void WriteToStream(Stream stream, AVPacket* packet)
+    {
+        var buffer = new byte[packet->size];
+        Marshal.Copy((IntPtr)packet->data, buffer, 0, packet->size);
+        stream.Write(buffer, 0, packet->size);
     }
 
     public IReadOnlyDictionary<string, string?>? GetContextInfo()

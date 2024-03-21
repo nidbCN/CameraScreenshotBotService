@@ -16,21 +16,19 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
     private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly OneBotSigner _signer = signer;
 
-    private readonly BotDeviceInfo _deviceInfo = new()
-    {
-        Guid = Guid.NewGuid(),
-        MacAddress = [0x3C, 0x22, 0x48, 0xFF, 0x2B, 0xE3],
-        DeviceName = $"lagrange-worker",
-        SystemKernel = "Windows 10.0.19042",
-        KernelVersion = "10.0.19042.0"
-    };
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         BotContext bot = null!;
+
         var keyStore = _storageService.LoadKeyStore();
-        if (keyStore is null)
+        var deviceInfo = _storageService.LoadDeviceInfo();
+
+        if (keyStore is null || deviceInfo is null)
         {
+            deviceInfo = BotDeviceInfo.GenerateInfo();
+            deviceInfo.DeviceName = "windows-camera";
+            keyStore = new BotKeystore();
+
             // Ê×´ÎµÇÂ½
             bot = BotFactory.Create(new()
             {
@@ -38,10 +36,10 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 UseIPv6Network = false,
                 Protocol = Protocols.Linux,
                 CustomSignProvider = _signer,
+            }, deviceInfo, new BotKeystore());
 
-            }, _deviceInfo, new BotKeystore());
-
-            var (_, codeImg) = await bot.FetchQrCode() ?? throw new Exception(message: "Fetch QRCode failed.");
+            var (_, codeImg) = await bot.FetchQrCode()
+                ?? throw new ApplicationException(message: "Fetch QRCode failed.");
 
             var codeImgFile = new FileInfo("./qrcode.png");
             using var stream = codeImgFile.OpenWrite();
@@ -55,6 +53,7 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
             codeImgFile.Delete();
 
             _storageService.SaveKeyStore(bot.UpdateKeystore());
+            _storageService.SaveDeviceInfo(deviceInfo);
         }
         else
         {
@@ -62,8 +61,9 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
             {
                 GetOptimumServer = true,
                 UseIPv6Network = false,
-                Protocol = Protocols.Windows
-            }, _deviceInfo, keyStore);
+                Protocol = Protocols.Linux,
+                CustomSignProvider = _signer,
+            }, deviceInfo, keyStore);
             await bot.LoginByPassword();
         }
 
@@ -125,10 +125,20 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 }
                 else
                 {
-                    var imageMessage = MessageBuilder
-                        .Group()
-                        .Image(bs);
+                    MessageBuilder imageMessage = null;
 
+                    if (bs is null)
+                    {
+                        imageMessage = MessageBuilder
+                        .Group(@event.Chain.GroupUin!.Value)
+                        .Text("±àÂë´óÊ§°Ü");
+                    }
+                    else
+                    {
+                        imageMessage = MessageBuilder
+                            .Group(@event.Chain.GroupUin!.Value)
+                            .Image(bs);
+                    }
                     await bot.SendMessage(imageMessage.Build());
                 }
             }
@@ -143,6 +153,9 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 {
                     return text;
                 }
+
+                var t = (m as TextEntity);
+
                 return null;
             }).Where(m => m != null);
             if (textMessage.Any(text =>
