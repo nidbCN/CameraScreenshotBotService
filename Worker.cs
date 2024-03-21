@@ -1,13 +1,18 @@
 using CameraScreenshotBotService.Services;
+using Lagrange.Core;
 using Lagrange.Core.Common;
+using Lagrange.Core.Common.Interface;
+using Lagrange.Core.Common.Interface.Api;
+using Lagrange.Core.Message;
+using Lagrange.Core.Message.Entity;
 using Lagrange.OneBot.Utility;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, /*StorageService storageService,*/ ScreenshotService screenshotService, OneBotSigner signer) : BackgroundService
+public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService, OneBotSigner signer) : BackgroundService
 {
     private readonly ILogger<Worker> _logger = logger;
-    // private readonly StorageService _storageService = storageService;
+    private readonly StorageService _storageService = storageService;
     private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly OneBotSigner _signer = signer;
 
@@ -22,52 +27,9 @@ public class Worker(ILogger<Worker> logger, /*StorageService storageService,*/ S
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await Console.Out.WriteLineAsync("async out, work started");
-
-        await Task.Delay(2000);
-
-        var r = _screenshotService.TryCapturePngImage(out var bs);
-
-        if (!r)
-        {
-            _logger.LogError("Decode Failed");
-        }
-
-
-        //unsafe
-        //{
-        //    var l = (f.data)[0];
-        //    var h = 480; var w = 640;
-        //    var warp = f.linesize[0];
-        //    var data = new byte[warp * h];
-        //    Marshal.Copy((IntPtr)l, data, 0, warp * h);
-
-        //    var file = new FileInfo("testg.pgm");
-
-        //    using var fs = file.OpenWrite();
-
-        //    var head = "P5\n640 480\n255\n";
-
-        //    var headB = Encoding.ASCII.GetBytes(head);
-
-        //    fs.Write(headB);
-
-        //    for (int i = 0; i < h; i++)
-        //    {
-        //        fs.Write(data, i*warp, w);
-        //    }
-
-        //    fs.Close();
-
-        //}
-
-        return;
-
-        /*
         BotContext bot = null!;
         var keyStore = _storageService.LoadKeyStore();
         if (keyStore is null)
-        // if (true)
         {
             // Ê×´ÎµÇÂ½
             bot = BotFactory.Create(new()
@@ -84,6 +46,7 @@ public class Worker(ILogger<Worker> logger, /*StorageService storageService,*/ S
             var codeImgFile = new FileInfo("./qrcode.png");
             using var stream = codeImgFile.OpenWrite();
             await stream.WriteAsync(codeImg, cancellationToken: stoppingToken);
+            stream.Close();
 
             _logger.LogInformation("Scan QRCode to login. QRCode image has been saved to {path}.", codeImgFile.FullName);
 
@@ -137,29 +100,75 @@ public class Worker(ILogger<Worker> logger, /*StorageService storageService,*/ S
             _logger.LogInformation("Login Success!");
         };
 
-        bot.Invoker.OnGroupMessageReceived += (_, @event) =>
+        bot.Invoker.OnGroupMessageReceived += async (_, @event) =>
         {
             var messageChain = @event.Chain;
-            _logger.LogInformation(messageChain[0].ToPreviewString());
-            var textMessage = messageChain.Select(m => m as TextEntity);
-            if (textMessage.Any(text => text?.ToPreviewString().StartsWith("") ?? false))
+            var textMessage = messageChain.Select(m =>
             {
+                if (m is TextEntity text)
+                {
+                    return text;
+                }
+                return null;
+            }).Where(m => m != null);
+            if (textMessage.Any(text =>
+            {
+                var textStr = text?.Text;
+                return textStr?.StartsWith("see") ?? false;
+            }))
+            {
+                var captureResult = _screenshotService.TryCapturePngImage(out var bs);
 
+                if (!captureResult)
+                {
+                    _logger.LogError("Decode Failed");
+                }
+                else
+                {
+                    var imageMessage = MessageBuilder
+                        .Group()
+                        .Image(bs);
+
+                    await bot.SendMessage(imageMessage.Build());
+                }
             }
-
         };
 
-        bot.Invoker.OnFriendMessageReceived += (_, @event) =>
+        bot.Invoker.OnFriendMessageReceived += async (_, @event) =>
         {
             var messageChain = @event.Chain;
-            _logger.LogInformation(messageChain[0].ToPreviewString());
-        };
+            var textMessage = messageChain.Select(m =>
+            {
+                if (m is TextEntity text)
+                {
+                    return text;
+                }
+                return null;
+            }).Where(m => m != null);
+            if (textMessage.Any(text =>
+            {
+                var textStr = text?.Text;
+                return textStr?.StartsWith("see") ?? false;
+            }))
+            {
+                var captureResult = _screenshotService.TryCapturePngImage(out var bs);
 
-        var privateMessageChain = MessageBuilder.Friend(3307954433).Text("111").Build();
-        await bot.SendMessage(privateMessageChain);
+                if (!captureResult)
+                {
+                    _logger.LogError("Decode Failed");
+                }
+                else
+                {
+                    var imageMessage = MessageBuilder
+                        .Friend(messageChain.FriendUin)
+                        .Image(bs);
+
+                    await bot.SendMessage(imageMessage.Build());
+                }
+            }
+        };
 
         await Task.Delay(1000, stoppingToken);
-        */
     }
 }
 

@@ -110,7 +110,7 @@ public sealed unsafe class ScreenshotService
                 }
             };
 
-            ffmpeg.av_log_set_callback(logCallback);
+            // ffmpeg.av_log_set_callback(logCallback);
         }
     }
 
@@ -207,10 +207,10 @@ public sealed unsafe class ScreenshotService
         var destPixelFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
 
         // 创建 AVFrame 用于编码
-        AVFrame* imageFrame = ffmpeg.av_frame_alloc();
+        var imageFrame = ffmpeg.av_frame_alloc();
         imageFrame->width = frame->width;
         imageFrame->height = frame->height;
-        imageFrame->format = (int)destPixelFormat;
+        // imageFrame->format = (int)destPixelFormat;
         ffmpeg.av_frame_get_buffer(imageFrame, 32); // 分配内存
 
         // 将 AVFrame 数据复制到 pngFrame
@@ -225,7 +225,7 @@ public sealed unsafe class ScreenshotService
                   height, imageFrame->data, imageFrame->linesize);
         ffmpeg.sws_freeContext(scaleCxt);
 
-        ffmpeg.avcodec_send_frame(_encoderCtx, imageFrame).ThrowExceptionIfError();
+        ffmpeg.avcodec_send_frame(_encoderCtx, imageFrame);
 
         using var memStream = new MemoryStream();
 
@@ -285,7 +285,6 @@ public sealed unsafe class ScreenshotService
                 _logger.LogError("Error, msg {m}", FFMpegExtension.av_strerror(ret));
             }
         } while (ret >= 0);
-
 
         // 释放资源
         ffmpeg.av_frame_free(&imageFrame);
