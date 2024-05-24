@@ -9,7 +9,7 @@ using Lagrange.Core.Event;
 
 namespace CameraScreenshotBotService.Services;
 
-public class BotService
+public class BotService : IDisposable
 {
     private readonly ILogger<BotService> _logger;
     private readonly BotOption _botOption;
@@ -70,9 +70,15 @@ public class BotService
                 Protocol = Protocols.Linux,
                 CustomSignProvider = _signer,
             }, deviceInfo, keyStore);
-            Bot.LoginByPassword();
+            Bot.LoginByQrCode().Wait();
         }
 
         _storageService.SaveKeyStore(Bot.UpdateKeystore());
+    }
+
+    public void Dispose()
+    {
+        Bot.Dispose();
+        GC.SuppressFinalize(this);
     }
 }
