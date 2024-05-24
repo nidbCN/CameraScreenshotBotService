@@ -32,15 +32,43 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
 
         _botService.Invoker.OnBotCaptchaEvent += (_, @event) =>
         {
-
             _logger.LogWarning("Need captcha, url: {msg}", @event.Url);
             _logger.LogInformation("Input response json string:");
             var json = Console.ReadLine();
-            var jsonObj = JsonSerializer.Deserialize<IDictionary<string, string>>(json);
+            if (json is null || string.IsNullOrWhiteSpace(json))
+            {
+                _logger.LogError("You input nothing! can't boot.");
+                throw new ApplicationException("Can't boot without captcha.");
+            }
 
-            if (jsonObj?.ContainsKey("ticket") != null && jsonObj?.ContainsKey("randstr") != null)
-                _botService.Bot.SubmitCaptcha(jsonObj["ticket"], jsonObj["randstr"]);
+            try
+            {
+                var jsonObj = JsonSerializer.Deserialize<IDictionary<string, string>>(json!);
 
+                if (jsonObj is null)
+                {
+                    _logger.LogError("Deserialize result is null.");
+                }
+                else
+                {
+                    const string TICKET = "ticket";
+                    const string RAND_STR = "randstr";
+
+                    if (jsonObj.TryGetValue(TICKET, out var ticket) && jsonObj.TryGetValue(RAND_STR, out var randstr))
+                    {
+                        _logger.LogInformation("Recv captcha, ticket {t}, randstr {s}", ticket, randstr);
+                        _botService.Bot.SubmitCaptcha(ticket, randstr);
+                    }else
+                    {
+                        throw new ApplicationException("Can't boot without captcha.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Deserialize failed! str: {s}", json);
+                throw;
+            }
         };
 
         _botService.Invoker.OnBotOnlineEvent += (_, @event) =>
@@ -59,7 +87,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text?.StartsWith("ÈÃÎÒ¿µ¿µ") ?? false))
+            if (textMessages.Any(m => m?.Text?.StartsWith("è®©æˆ‘çœ‹çœ‹ï¼") ?? false))
             {
                 var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
 
@@ -71,7 +99,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                     if (!captureResult || imageBytes is null)
                     {
                         _logger.LogError("Decode failed, send error message.");
-                        sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂëÊ§°Ü£©");
+                        sendMessage.Text("æ°å“¥ä¸è¦ï¼ï¼ˆå›¾åƒç¼–è§£ç å¤±è´¥ï¼‰");
                     }
                     else
                     {
@@ -81,7 +109,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 catch (ApplicationException e)
                 {
                     _logger.LogError("Faile to decode and encode, {error}", e.Message);
-                    sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂë±ÀÀ££©");
+                    sendMessage.Text("æ°å“¥ä¸è¦ï¼ï¼ˆå›¾åƒç¼–ç å™¨å´©æºƒï¼‰");
                 }
                 finally
                 {
@@ -102,7 +130,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text?.StartsWith("ÈÃÎÒ¿µ¿µ") ?? false))
+            if (textMessages.Any(m => m?.Text?.StartsWith("è®©æˆ‘çœ‹çœ‹") ?? false))
             {
                 var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
 
@@ -114,7 +142,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                     if (!captureResult || imageBytes is null)
                     {
                         _logger.LogError("Decode failed, send error message.");
-                        sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂëÊ§°Ü£©");
+                        sendMessage.Text("æ°å“¥ä¸è¦ï¼ï¼ˆå›¾åƒç¼–è§£ç å¤±è´¥ï¼‰");
                     }
                     else
                     {
@@ -124,7 +152,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 catch (ApplicationException e)
                 {
                     _logger.LogError("Faile to decode and encode, {error}", e.Message);
-                    sendMessage.Text("½Ü¸ç²»Òª£¡£¨Í¼Ïñ±à½âÂë±ÀÀ££©");
+                    sendMessage.Text("æ°å“¥ä¸è¦ï¼ï¼ˆå›¾åƒç¼–è§£ç å™¨å´©æºƒï¼‰");
                 }
                 finally
                 {
