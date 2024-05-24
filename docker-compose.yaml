@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  ProxyDistributor:
+    image: gaein/camera-screenshot-bot:v1.5
+    container_name: camera-screenshot-bot
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./Images/:/app/Images/
+    configs:
+      - source: appsettings
+        target: /app/appsettings.json
+    restart: unless-stopped
+
+configs:
+  appsettings:
+    file: ./appsettings.json

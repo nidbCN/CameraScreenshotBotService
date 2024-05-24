@@ -23,11 +23,9 @@
     <PackageReference Include="Lagrange.Core" Version="0.0.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.5" />
-    <PackageReference Include="QRCoder" Version="1.4.3" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="Lagrange.Core\Utility\Network\" />
-    <Folder Include="Configs\" />
   </ItemGroup>
 </Project>
