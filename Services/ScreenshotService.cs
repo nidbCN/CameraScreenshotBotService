@@ -2,15 +2,15 @@
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 using CameraScreenshotBotService.Extensions;
-
+using CameraScreenshotBotService.Configs;
+using Microsoft.Extensions.Options;
 
 namespace CameraScreenshotBotService.Services;
 
 public sealed unsafe class ScreenshotService
 {
     private readonly ILogger<ScreenshotService> _logger;
-    private readonly IConfiguration _config;
-    private readonly string _url;
+    private readonly StreamOption _streamOption;
 
     private readonly SwsContext* _pixConverterCtx;
 
@@ -18,7 +18,7 @@ public sealed unsafe class ScreenshotService
     private readonly AVCodecContext* _encoderCtx;
 
     private AVFormatContext* _inputFormatCtx;
-    private AVDictionary* _openOptions;
+    private readonly AVDictionary* _openOptions;
 
     private readonly AVFrame* _inputFrame;
     private readonly AVPacket* _pPacket;
@@ -26,17 +26,18 @@ public sealed unsafe class ScreenshotService
 
     private readonly int _streamIndex;
 
-    public ScreenshotService(ILogger<ScreenshotService> logger, IConfiguration config)
+    public ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
-        _config = config;
+        _streamOption = option?.Value
+            ?? throw new ArgumentNullException(nameof(option));
 
-        _url = config["Camera:Url"] ?? throw new ArgumentNullException("CameraUrl");
+        if (_streamOption.Url is null)
+            throw new ArgumentNullException(nameof(option), "StreamOption.Url can not be null.");
 
         // 设置超时
-        AVDictionary* openOptions = null;
+        var openOptions = _openOptions;
         ffmpeg.av_dict_set(&openOptions, "timeout", "3000", 0);
-        _openOptions = openOptions;
 
         // 初始化 ffmpeg 输入
         OpenInput();
@@ -53,11 +54,19 @@ public sealed unsafe class ScreenshotService
             _decoderCtx = ffmpeg.avcodec_alloc_context3(decoder);
             ffmpeg.avcodec_parameters_to_context(_decoderCtx, _inputFormatCtx->streams[_streamIndex]->codecpar)
                 .ThrowExceptionIfError();
-            _decoderCtx->thread_count = ushort.Parse(config["DecodeThread"] ?? "4");
+            _decoderCtx->thread_count = (int)_streamOption.DecodeThreads;
             ffmpeg.avcodec_open2(_decoderCtx, decoder, null).ThrowExceptionIfError();
 
             StreamCodecName = ffmpeg.avcodec_get_name(decoder->id);
-            StreamPixelFormat = _decoderCtx->pix_fmt;
+            var pixFormat = _decoderCtx->pix_fmt switch
+            {
+                AVPixelFormat.AV_PIX_FMT_YUVJ420P => AVPixelFormat.AV_PIX_FMT_YUV420P,
+                AVPixelFormat.AV_PIX_FMT_YUVJ422P => AVPixelFormat.AV_PIX_FMT_YUV422P,
+                AVPixelFormat.AV_PIX_FMT_YUVJ444P => AVPixelFormat.AV_PIX_FMT_YUV444P,
+                AVPixelFormat.AV_PIX_FMT_YUVJ440P => AVPixelFormat.AV_PIX_FMT_YUV440P,
+                _ => *_decoderCtx->codec->pix_fmts,
+            };
+            StreamPixelFormat = pixFormat;
             StreamWidth = _decoderCtx->width;
             StreamHeight = _decoderCtx->height;
         }
@@ -82,7 +91,7 @@ public sealed unsafe class ScreenshotService
 
         {
             // 初始化 SwsContext
-            _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight, _decoderCtx->pix_fmt,
+            _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight,StreamPixelFormat,
                               StreamWidth, StreamHeight, _encoderCtx->pix_fmt,
                               ffmpeg.SWS_BICUBIC, null, null, null);
         }
@@ -145,7 +154,8 @@ public sealed unsafe class ScreenshotService
         var openOptions = _openOptions;
 
         // 打开流
-        ffmpeg.avformat_open_input(&fotmatCtx, _url, null, null).ThrowExceptionIfError();
+        ffmpeg.avformat_open_input(&fotmatCtx, _streamOption.Url.AbsoluteUri, null, &openOptions)
+            .ThrowExceptionIfError();
     }
 
     public void CloseInput()
@@ -251,7 +261,7 @@ public sealed unsafe class ScreenshotService
 
         var width = frame->width;
         var height = frame->height;
-        var sourcePixelFormat = _decoderCtx->pix_fmt;
+        var sourcePixelFormat = StreamPixelFormat;
         var destPixelFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
 
         // 创建 AVFrame 用于编码

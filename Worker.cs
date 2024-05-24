@@ -1,77 +1,20 @@
 using CameraScreenshotBotService.Services;
-using Lagrange.Core;
-using Lagrange.Core.Common;
-using Lagrange.Core.Common.Interface;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
-using Lagrange.OneBot.Utility;
 using System.Text.Json;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, StorageService storageService, ScreenshotService screenshotService, OneBotSigner signer, IConfiguration config) : BackgroundService
+public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService, BotService botService) : BackgroundService
 {
     private readonly ILogger<Worker> _logger = logger;
-    private readonly StorageService _storageService = storageService;
     private readonly ScreenshotService _screenshotService = screenshotService;
-    private readonly OneBotSigner _signer = signer;
-    // private readonly IList<uint> _allowGroups = JsonSerializer.Deserialize<IList<uint>>(config["AllowGroups"]);
+    private readonly BotService _botService = botService;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        BotContext bot = null!;
-
-        var keyStore = _storageService.LoadKeyStore();
-        var deviceInfo = _storageService.LoadDeviceInfo();
-
-        if (keyStore is null || deviceInfo is null)
-        {
-            deviceInfo = BotDeviceInfo.GenerateInfo();
-            deviceInfo.DeviceName = "windows-camera";
-            keyStore = new BotKeystore();
-
-            // Ê×´ÎµÇÂ½
-            bot = BotFactory.Create(new()
-            {
-                GetOptimumServer = true,
-                UseIPv6Network = false,
-                Protocol = Protocols.Linux,
-                CustomSignProvider = _signer,
-            }, deviceInfo, new BotKeystore());
-
-            var (_, codeImg) = await bot.FetchQrCode()
-                ?? throw new ApplicationException(message: "Fetch QRCode failed.");
-
-            var codeImgFile = new FileInfo("./qrcode.png");
-            using var stream = codeImgFile.OpenWrite();
-            await stream.WriteAsync(codeImg, cancellationToken: stoppingToken);
-            stream.Close();
-
-            _logger.LogInformation("Scan QRCode to login. QRCode image has been saved to {path}.", codeImgFile.FullName);
-
-            await bot.LoginByQrCode();
-
-            codeImgFile.Delete();
-
-            _storageService.SaveKeyStore(bot.UpdateKeystore());
-            _storageService.SaveDeviceInfo(deviceInfo);
-        }
-        else
-        {
-            bot = BotFactory.Create(new()
-            {
-                GetOptimumServer = true,
-                UseIPv6Network = false,
-                Protocol = Protocols.Linux,
-                CustomSignProvider = _signer,
-            }, deviceInfo, keyStore);
-            await bot.LoginByPassword();
-        }
-
-        _storageService.SaveKeyStore(bot.UpdateKeystore());
-
-        bot.Invoker.OnBotLogEvent += (_, @event) =>
+        _botService.Invoker.OnBotLogEvent += (_, @event) =>
         {
             switch (@event.Level)
             {
@@ -87,22 +30,25 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
             }
         };
 
-        bot.Invoker.OnBotCaptchaEvent += (_, @event) =>
+        _botService.Invoker.OnBotCaptchaEvent += (_, @event) =>
         {
-            _logger.LogWarning(@event.ToString());
-            _logger.LogWarning("Need captcha!");
-            Console.WriteLine(@event.ToString());
-            var captcha = Console.ReadLine();
-            var randStr = Console.ReadLine();
-            if (captcha != null && randStr != null) bot.SubmitCaptcha(captcha, randStr);
+
+            _logger.LogWarning("Need captcha, url: {msg}", @event.Url);
+            _logger.LogInformation("Input response json string:");
+            var json = Console.ReadLine();
+            var jsonObj = JsonSerializer.Deserialize<IDictionary<string, string>>(json);
+
+            if (jsonObj?.ContainsKey("ticket") != null && jsonObj?.ContainsKey("randstr") != null)
+                _botService.Bot.SubmitCaptcha(jsonObj["ticket"], jsonObj["randstr"]);
+
         };
 
-        bot.Invoker.OnBotOnlineEvent += (_, @event) =>
+        _botService.Invoker.OnBotOnlineEvent += (_, @event) =>
         {
             _logger.LogInformation("Login Success!");
         };
 
-        bot.Invoker.OnGroupMessageReceived += async (_, @event) =>
+        _botService.Invoker.OnGroupMessageReceived += async (_, @event) =>
         {
             var recvMessages = @event.Chain;
 
@@ -140,12 +86,12 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 finally
                 {
                     _screenshotService.CloseInput();
-                    await bot.SendMessage(sendMessage.Build());
+                    await _botService.Bot.SendMessage(sendMessage.Build());
                 }
             }
         };
 
-        bot.Invoker.OnFriendMessageReceived += async (_, @event) =>
+        _botService.Invoker.OnFriendMessageReceived += async (_, @event) =>
         {
             var recvMessages = @event.Chain;
 
@@ -183,7 +129,7 @@ public class Worker(ILogger<Worker> logger, StorageService storageService, Scree
                 finally
                 {
                     _screenshotService.CloseInput();
-                    await bot.SendMessage(sendMessage.Build());
+                    await _botService.Bot.SendMessage(sendMessage.Build());
                 }
             }
         };

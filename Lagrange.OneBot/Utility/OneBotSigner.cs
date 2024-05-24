@@ -60,8 +60,8 @@ public class OneBotSigner : SignProvider
             string response = message.Content.ReadAsStringAsync().Result;
             var json = JsonSerializer.Deserialize<JsonObject>(response);
 
-            ver = json?["value"]?["extra"]?.ToString().UnHex() ?? Array.Empty<byte>();
-            token = Encoding.ASCII.GetString(json?["value"]?["token"]?.ToString().UnHex() ?? Array.Empty<byte>());
+            ver = json?["value"]?["extra"]?.ToString().UnHex() ?? [];
+            token = Encoding.ASCII.GetString(json?["value"]?["token"]?.ToString().UnHex() ?? []);
             return json?["value"]?["sign"]?.ToString().UnHex() ?? new byte[35];
         }
         catch
