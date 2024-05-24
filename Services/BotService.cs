@@ -70,7 +70,11 @@ public class BotService : IDisposable
                 Protocol = Protocols.Linux,
                 CustomSignProvider = _signer,
             }, deviceInfo, keyStore);
-            Bot.LoginByQrCode().Wait();
+            var logined = Bot.LoginByPassword().Result;
+            if (!logined)
+            {
+                _logger.LogError("Login failed!");
+            }
         }
 
         _storageService.SaveKeyStore(Bot.UpdateKeystore());
