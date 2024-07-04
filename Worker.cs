@@ -53,24 +53,27 @@ public class Worker(ILogger<Worker> logger,
         {
             switch (@event.Level)
             {
-                case LogLevel.Debug:
-                    logger.LogDebug("From bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Warning:
-                    logger.LogWarning("From bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Fatal:
-                    logger.LogError("From bot: {msg}", @event.EventMessage);
-                    break;
                 case LogLevel.Verbose:
+                    logger.LogTrace("bot: {msg}", @event.EventMessage);
+                    break;
+                case LogLevel.Debug:
+                    logger.LogDebug("bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Information:
-                    logger.LogInformation("From bot: {msg}", @event.EventMessage);
+                    logger.LogInformation("bot: {msg}", @event.EventMessage);
+                    break;
+                case LogLevel.Warning:
+                    logger.LogWarning("bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Exception:
+                    logger.LogError("bot: {msg}", @event.EventMessage);
+                    break;
+                case LogLevel.Fatal:
+                    logger.LogCritical("bot: {msg}", @event.EventMessage);
                     break;
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(@event));
+                    logger.LogWarning("bot, unknown level: {msg}", @event.EventMessage);
+                    break;
             }
         };
 

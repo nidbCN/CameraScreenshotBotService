@@ -4,6 +4,7 @@ using FFmpeg.AutoGen;
 using CameraScreenshotBotService.Extensions;
 using CameraScreenshotBotService.Configs;
 using Microsoft.Extensions.Options;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace CameraScreenshotBotService.Services;
 
@@ -23,6 +24,8 @@ public sealed class ScreenshotService
     private readonly unsafe AVPacket* _pPacket;
     private unsafe AVFrame* _receivedFrame;
 
+    private av_log_set_callback_callback _logCallback;
+
     private readonly int _streamIndex;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
@@ -38,6 +41,8 @@ public sealed class ScreenshotService
     public unsafe ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
+        _logCallback = FfmpegLogInvoke;
+
         _streamOption = option.Value
             ?? throw new ArgumentNullException(nameof(option));
 
@@ -109,20 +114,19 @@ public sealed class ScreenshotService
         _pPacket = ffmpeg.av_packet_alloc();
         _inputFrame = ffmpeg.av_frame_alloc();
 
-        var callback = new av_log_set_callback_callback(FfmpegLogInvoke);
-
         // 设置日志
 
-        ffmpeg.av_log_set_level(option.Value.LogLevel?.ToUpper() switch
+        if (option.Value.LogLevel is not null)
         {
-            "DEBUG" => ffmpeg.AV_LOG_DEBUG,
-            "WARNING" => ffmpeg.AV_LOG_WARNING,
-            "ERROR" => ffmpeg.AV_LOG_ERROR,
-            _ => ffmpeg.AV_LOG_INFO
-        });
-
-        ffmpeg.av_log_set_callback(callback);
-
+            ffmpeg.av_log_set_level(option.Value.LogLevel.ToUpper() switch
+            {
+                "DEBUG" => ffmpeg.AV_LOG_DEBUG,
+                "WARNING" => ffmpeg.AV_LOG_WARNING,
+                "ERROR" => ffmpeg.AV_LOG_ERROR,
+                _ => ffmpeg.AV_LOG_INFO,
+            });
+            ffmpeg.av_log_set_callback(_logCallback);
+        }
     }
 
     private unsafe void FfmpegLogInvoke(void* p0, int level, string format, byte* vl)
@@ -134,7 +138,6 @@ public sealed class ScreenshotService
         var printPrefix = 1;
         ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
         var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
-
         switch (level)
         {
             case ffmpeg.AV_LOG_DEBUG:
@@ -147,7 +150,7 @@ public sealed class ScreenshotService
                 _logger.LogInformation("ffmpeg: {msg}", line);
                 break;
             default:
-                _logger.LogInformation("ffmpeg: {msg}", line);
+                _logger.LogWarning("ffmpeg, unknown level {level}: {msg}", level, line);
                 break;
         }
     }
@@ -262,34 +265,53 @@ public sealed class ScreenshotService
         return true;
     }
 
-    public async Task<(bool, byte[]?)> CapturePngImageAsync(CancellationToken ctx = default)
+    public async Task<(bool, byte[]?)> CapturePngImageAsync(CancellationToken cancellationToken = default)
     {
-        await _semaphore.WaitAsync(ctx);
+        await _semaphore.WaitAsync(cancellationToken);
 
         try
         {
-            var timeSpan = DateTime.Now - LastCaptureTime;
-            if (LastCapturedImage != null &&
-                timeSpan <= TimeSpan.FromSeconds(20))
+            var captureTimeSpan = DateTime.Now - LastCaptureTime;
+            if (LastCapturedImage != null && captureTimeSpan <= TimeSpan.FromSeconds(20))
             {
-                _logger.LogInformation("Return image cached {time} ago.", timeSpan.ToString("g"));
+                _logger.LogInformation("Return image cached {time} ago.", captureTimeSpan);
                 return (true, LastCapturedImage);
             }
 
-            _logger.LogInformation("Cache image {time} ago expired, capture new.", timeSpan.ToString("g"));
-            var result = TryCapturePngImageUnsafe(out var image);
-            return (result, image);
+            _logger.LogInformation("Cache image {time} ago expired, capture new.", captureTimeSpan);
         }
         finally
         {
             _semaphore.Release();
         }
+
+        var result = await Task.Run(async () =>
+        {
+            await _semaphore.WaitAsync(cancellationToken);
+
+            try
+            {
+                var success = TryCapturePngImageUnsafe(out var image);
+
+                if (success)
+                {
+                    LastCapturedImage = image;
+                    LastCaptureTime = DateTime.Now;
+                }
+
+                return (success, image);
+            }
+            finally
+            {
+                _semaphore.Release();
+            }
+        }, cancellationToken);
+        return result;
     }
 
     public unsafe bool TryCapturePngImageUnsafe(out byte[]? image)
     {
         OpenInput();
-        IsDecoding = true;
 
         var result = false;
         image = null;
@@ -364,11 +386,8 @@ public sealed class ScreenshotService
 
         // result
         image = memStream.ToArray();
-        LastCapturedImage = image;
-        LastCaptureTime = DateTime.Now;
         memStream.Close();
 
-        IsDecoding = false;
         CloseInput();
         return result;
     }
