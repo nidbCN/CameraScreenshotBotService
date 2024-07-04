@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace CameraScreenshotBotService.Services;
 
-public sealed class ScreenshotService : IDisposable
+public sealed class ScreenshotService
 {
     private readonly ILogger<ScreenshotService> _logger;
     private readonly StreamOption _streamOption;
@@ -180,6 +180,7 @@ public sealed class ScreenshotService : IDisposable
         ffmpeg.av_frame_unref(_receivedFrame);
     }
 
+    // 会引发异常，待排查
     public unsafe void Dispose()
     {
         var pFrame = _inputFrame;
@@ -267,10 +268,15 @@ public sealed class ScreenshotService : IDisposable
 
         try
         {
+            var timeSpan = DateTime.Now - LastCaptureTime;
             if (LastCapturedImage != null &&
-                DateTime.Now - LastCaptureTime <= TimeSpan.FromSeconds(20))
+                timeSpan <= TimeSpan.FromSeconds(20))
+            {
+                _logger.LogInformation("Return image cached {time} ago.", timeSpan.ToString("g"));
                 return (true, LastCapturedImage);
+            }
 
+            _logger.LogInformation("Cache image {time} ago expired, capture new.", timeSpan.ToString("g"));
             var result = TryCapturePngImageUnsafe(out var image);
             return (result, image);
         }

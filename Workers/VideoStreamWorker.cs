@@ -9,15 +9,15 @@ public sealed class VideoStreamWorker : BackgroundService
     private ILogger<VideoStreamWorker> _logger;
     private readonly IConfiguration _config;
 
-    private unsafe readonly SwsContext* _pixConverterCtx;
+    private readonly unsafe SwsContext* _pixConverterCtx;
 
-    private unsafe readonly AVCodecContext* _decoderCtx;
-    private unsafe readonly AVCodecContext* _encoderCtx;
+    private readonly unsafe AVCodecContext* _decoderCtx;
+    private readonly unsafe AVCodecContext* _encoderCtx;
 
-    private unsafe readonly AVFormatContext* _inputFormatCtx;
-    private unsafe readonly AVFrame* _inputFrame;
-    private unsafe readonly AVPacket* _pPacket;
-    private unsafe readonly AVFrame* _receivedFrame;
+    private readonly unsafe AVFormatContext* _inputFormatCtx;
+    private readonly unsafe AVFrame* _inputFrame;
+    private readonly unsafe AVPacket* _pPacket;
+    private readonly unsafe AVFrame* _receivedFrame;
 
     private readonly int _streamIndex;
     public string StreamCodecName { get; }
@@ -132,7 +132,7 @@ public sealed class VideoStreamWorker : BackgroundService
         }
     }
 
-    public unsafe new void Dispose()
+    public new unsafe void Dispose()
     {
         var pFrame = _inputFrame;
         ffmpeg.av_frame_free(&pFrame);
