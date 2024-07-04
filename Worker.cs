@@ -3,6 +3,7 @@ using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
 using System.Text.Json;
+using LogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 
 namespace CameraScreenshotBotService;
 
@@ -12,21 +13,59 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
     private readonly ScreenshotService _screenshotService = screenshotService;
     private readonly BotService _botService = botService;
 
+    private async Task SendCaptureMessage(MessageBuilder message)
+    {
+        try
+        {
+            var (result, image) = await _screenshotService.CapturePngImageAsync();
+
+            if (!result || image is null)
+            {
+                // 编解码失败
+                _logger.LogError("Decode failed, send error message.");
+                message.Text("杰哥不要！（图像编解码失败）");
+            }
+            else
+            {
+                message.Text("开玩笑，我超勇的好不好");
+                message.Image(image);
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
+            message.Text("杰哥不要！（图像编码器崩溃）");
+        }
+        finally
+        {
+            await _botService.Bot.SendMessage(message.Build());
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _botService.Invoker.OnBotLogEvent += (_, @event) =>
         {
             switch (@event.Level)
             {
-                case Lagrange.Core.Event.EventArg.LogLevel.Debug:
-                    _logger.LogDebug(@event.EventMessage);
+                case LogLevel.Debug:
+                    _logger.LogDebug("From bot: {msg}", @event.EventMessage);
                     break;
-                case Lagrange.Core.Event.EventArg.LogLevel.Warning:
-                    _logger.LogWarning(@event.EventMessage);
+                case LogLevel.Warning:
+                    _logger.LogWarning("From bot: {msg}", @event.EventMessage);
                     break;
-                case Lagrange.Core.Event.EventArg.LogLevel.Fatal:
-                    _logger.LogError(@event.EventMessage);
+                case LogLevel.Fatal:
+                    _logger.LogError("From bot: {msg}", @event.EventMessage);
                     break;
+                case LogLevel.Verbose:
+                    break;
+                case LogLevel.Information:
+                    _logger.LogInformation("From bot: {msg}", @event.EventMessage);
+                    break;
+                case LogLevel.Exception:
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(@event));
             }
         };
 
@@ -88,51 +127,11 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text.StartsWith("让我看看！") ?? false))
+            if (textMessages.Any(m => m?.Text.StartsWith("让我看看") ?? false))
             {
                 var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
 
-                try
-                {
-                    var cacheTime = DateTime.Now - _screenshotService.CacheTime;
-
-                    if (_screenshotService.CacheImage != null
-                        && cacheTime < TimeSpan.FromSeconds(10))
-                    {
-                        _logger.LogInformation("Send cached image from {time} ago.",
-                            cacheTime);
-                        sendMessage.Image(_screenshotService.CacheImage);
-                    }
-                    else
-                    {
-                        do
-                        {
-                            if (screenshotService.IsDecoding) continue;
-
-                            var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
-                            if (!captureResult || imageBytes is null)
-                            {
-                                _logger.LogError("Decode failed, send error message.");
-                                sendMessage.Text("杰哥不要！（图像编解码失败）");
-                            }
-                            else
-                            {
-                                sendMessage.Image(imageBytes);
-                            }
-
-                            break;
-                        } while (!stoppingToken.IsCancellationRequested);
-                    }
-                }
-                catch (Exception e)
-                {
-                    _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
-                    sendMessage.Text("杰哥不要！（图像编码器崩溃）");
-                }
-                finally
-                {
-                    await _botService.Bot.SendMessage(sendMessage.Build());
-                }
+                await SendCaptureMessage(sendMessage);
             }
         };
 
@@ -150,48 +149,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
             if (textMessages.Any(m => m?.Text.StartsWith("让我看看") ?? false))
             {
                 var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
-
-                try
-                {
-                    var cacheTime = DateTime.Now - _screenshotService.CacheTime;
-
-                    if (_screenshotService.CacheImage != null
-                        && cacheTime < TimeSpan.FromSeconds(10))
-                    {
-                        _logger.LogInformation("Send cached image from {time} ago.",
-                            cacheTime);
-                        sendMessage.Image(_screenshotService.CacheImage);
-                    }
-                    else
-                    {
-                        do
-                        {
-                            if (screenshotService.IsDecoding) continue;
-
-                            var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
-                            if (!captureResult || imageBytes is null)
-                            {
-                                _logger.LogError("Decode failed, send error message.");
-                                sendMessage.Text("杰哥不要！（图像编解码失败）");
-                            }
-                            else
-                            {
-                                sendMessage.Image(imageBytes);
-                            }
-
-                            break;
-                        } while (!stoppingToken.IsCancellationRequested);
-                    }
-                }
-                catch (Exception e)
-                {
-                    _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
-                    sendMessage.Text("杰哥不要！（图像编解码器崩溃）");
-                }
-                finally
-                {
-                    await _botService.Bot.SendMessage(sendMessage.Build());
-                }
+                await SendCaptureMessage(sendMessage);
             }
         };
 

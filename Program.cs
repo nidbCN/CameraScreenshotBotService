@@ -25,4 +25,10 @@ builder.Services.AddSingleton<BotService>();
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
+
+// test ffmpeg load
+var version = ffmpeg.av_version_info();
+var logger = host.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("Load ffmpeg version {v}", version);
+
 host.Run();
