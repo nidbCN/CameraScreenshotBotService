@@ -91,8 +91,8 @@ public sealed class ScreenshotService : IDisposable
             // 设置编码器参数
             _encoderCtx->width = StreamWidth;
             _encoderCtx->height = StreamHeight;
-            _encoderCtx->time_base = new AVRational { num = 1, den = 25 }; // 设置时间基准
-            _encoderCtx->framerate = new AVRational { num = 25, den = 1 };
+            _encoderCtx->time_base = new() { num = 1, den = 25 }; // 设置时间基准
+            _encoderCtx->framerate = new() { num = 25, den = 1 };
             _encoderCtx->pix_fmt = AVPixelFormat.AV_PIX_FMT_RGB24;
 
             // 打开编码器
@@ -109,45 +109,46 @@ public sealed class ScreenshotService : IDisposable
         _pPacket = ffmpeg.av_packet_alloc();
         _inputFrame = ffmpeg.av_frame_alloc();
 
+        var callback = new av_log_set_callback_callback(FfmpegLogInvoke);
+
         // 设置日志
+
+        ffmpeg.av_log_set_level(option.Value.LogLevel?.ToUpper() switch
         {
-            //ffmpeg.av_log_set_level(config["Camera:Log"]?.ToUpper() switch
-            //{
-            //    "DEBUG" => ffmpeg.AV_LOG_DEBUG,
-            //    "WARNING" => ffmpeg.AV_LOG_WARNING,
-            //    "ERROR" => ffmpeg.AV_LOG_ERROR,
-            //    _ => ffmpeg.AV_LOG_INFO
-            //});
+            "DEBUG" => ffmpeg.AV_LOG_DEBUG,
+            "WARNING" => ffmpeg.AV_LOG_WARNING,
+            "ERROR" => ffmpeg.AV_LOG_ERROR,
+            _ => ffmpeg.AV_LOG_INFO
+        });
 
-            //// do not convert to local function
-            //av_log_set_callback_callback logCallback = (p0, level, format, vl) =>
-            //{
-            //    if (level > ffmpeg.av_log_get_level()) return;
+        ffmpeg.av_log_set_callback(callback);
 
-            //    var lineSize = 1024;
-            //    var lineBuffer = stackalloc byte[lineSize];
-            //    var printPrefix = 1;
-            //    ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
-            //    var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
+    }
 
-            //    switch (level)
-            //    {
-            //        case ffmpeg.AV_LOG_DEBUG:
-            //            _logger.LogDebug(line);
-            //            break;
-            //        case ffmpeg.AV_LOG_WARNING:
-            //            _logger.LogWarning(line);
-            //            break;
-            //        case ffmpeg.AV_LOG_INFO:
-            //            _logger.LogInformation(line);
-            //            break;
-            //        default:
-            //            _logger.LogInformation(line);
-            //            break;
-            //    }
-            //};
+    private unsafe void FfmpegLogInvoke(void* p0, int level, string format, byte* vl)
+    {
+        if (level > ffmpeg.av_log_get_level()) return;
 
-            // ffmpeg.av_log_set_callback(logCallback);
+        var lineSize = 1024;
+        var lineBuffer = stackalloc byte[lineSize];
+        var printPrefix = 1;
+        ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
+        var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
+
+        switch (level)
+        {
+            case ffmpeg.AV_LOG_DEBUG:
+                _logger.LogDebug("ffmpeg: {msg}", line);
+                break;
+            case ffmpeg.AV_LOG_WARNING:
+                _logger.LogWarning("ffmpeg: {msg}", line);
+                break;
+            case ffmpeg.AV_LOG_INFO:
+                _logger.LogInformation("ffmpeg: {msg}", line);
+                break;
+            default:
+                _logger.LogInformation("ffmpeg: {msg}", line);
+                break;
         }
     }
 
@@ -239,7 +240,7 @@ public sealed class ScreenshotService : IDisposable
             if (_inputFrame->pict_type != AVPictureType.AV_PICTURE_TYPE_I) continue;
 
             // 关键帧，退出循环
-            _logger.LogInformation("Unpack frame counter: {cnt}, frame type {type}",
+            _logger.LogInformation("Drop non-I frame: {cnt}, decode frame type {type}.",
                 cnt, _inputFrame->pict_type.ToString());
             break;
         }

@@ -2,27 +2,32 @@ using CameraScreenshotBotService.Services;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using LogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 
 namespace CameraScreenshotBotService;
 
-public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService, BotService botService) : BackgroundService
+public class Worker(ILogger<Worker> logger,
+    ScreenshotService screenshotService,
+    BotService botService) : BackgroundService
 {
-    private readonly ILogger<Worker> _logger = logger;
-    private readonly ScreenshotService _screenshotService = screenshotService;
-    private readonly BotService _botService = botService;
+    private readonly JsonSerializerOptions _jsonSerializerOptions = new()
+    {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin, UnicodeRanges.CjkUnifiedIdeographs)
+    };
 
     private async Task SendCaptureMessage(MessageBuilder message)
     {
         try
         {
-            var (result, image) = await _screenshotService.CapturePngImageAsync();
+            var (result, image) = await screenshotService.CapturePngImageAsync();
 
             if (!result || image is null)
             {
                 // 编解码失败
-                _logger.LogError("Decode failed, send error message.");
+                logger.LogError("Decode failed, send error message.");
                 message.Text("杰哥不要！（图像编解码失败）");
             }
             else
@@ -33,34 +38,34 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
         }
         catch (Exception e)
         {
-            _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
+            logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
             message.Text("杰哥不要！（图像编码器崩溃）");
         }
         finally
         {
-            await _botService.Bot.SendMessage(message.Build());
+            await botService.Bot.SendMessage(message.Build());
         }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _botService.Invoker.OnBotLogEvent += (_, @event) =>
+        botService.Invoker.OnBotLogEvent += (_, @event) =>
         {
             switch (@event.Level)
             {
                 case LogLevel.Debug:
-                    _logger.LogDebug("From bot: {msg}", @event.EventMessage);
+                    logger.LogDebug("From bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Warning:
-                    _logger.LogWarning("From bot: {msg}", @event.EventMessage);
+                    logger.LogWarning("From bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Fatal:
-                    _logger.LogError("From bot: {msg}", @event.EventMessage);
+                    logger.LogError("From bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Verbose:
                     break;
                 case LogLevel.Information:
-                    _logger.LogInformation("From bot: {msg}", @event.EventMessage);
+                    logger.LogInformation("From bot: {msg}", @event.EventMessage);
                     break;
                 case LogLevel.Exception:
                     break;
@@ -69,14 +74,14 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
             }
         };
 
-        _botService.Invoker.OnBotCaptchaEvent += (_, @event) =>
+        botService.Invoker.OnBotCaptchaEvent += (_, @event) =>
         {
-            _logger.LogWarning("Need captcha, url: {msg}", @event.Url);
-            _logger.LogInformation("Input response json string:");
+            logger.LogWarning("Need captcha, url: {msg}", @event.Url);
+            logger.LogInformation("Input response json string:");
             var json = Console.ReadLine();
             if (json is null || string.IsNullOrWhiteSpace(json))
             {
-                _logger.LogError("You input nothing! can't boot.");
+                logger.LogError("You input nothing! can't boot.");
                 throw new ApplicationException("Can't boot without captcha.");
             }
 
@@ -86,7 +91,7 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
 
                 if (jsonObj is null)
                 {
-                    _logger.LogError("Deserialize result is null.");
+                    logger.LogError("Deserialize result is null.");
                 }
                 else
                 {
@@ -95,8 +100,8 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
 
                     if (jsonObj.TryGetValue(TICKET, out var ticket) && jsonObj.TryGetValue(RAND_STR, out var randstr))
                     {
-                        _logger.LogInformation("Recv captcha, ticket {t}, randstr {s}", ticket, randstr);
-                        _botService.Bot.SubmitCaptcha(ticket, randstr);
+                        logger.LogInformation("Recv captcha, ticket {t}, randstr {s}", ticket, randstr);
+                        botService.Bot.SubmitCaptcha(ticket, randstr);
                     }
                     else
                     {
@@ -106,24 +111,25 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "Deserialize failed! str: {s}", json);
+                logger.LogError(e, "Deserialize failed! str: {s}", json);
                 throw;
             }
         };
 
-        _botService.Invoker.OnBotOnlineEvent += (_, @event) =>
+        botService.Invoker.OnBotOnlineEvent += (_, @event) =>
         {
-            _logger.LogInformation("Login Success!");
+            logger.LogInformation("Login Success!");
         };
 
-        _botService.Invoker.OnGroupMessageReceived += async (_, @event) =>
+        botService.Invoker.OnGroupMessageReceived += async (_, @event) =>
         {
-            var recvMessages = @event.Chain;
+            var receivedMessage = @event.Chain;
 
-            _logger.LogInformation("Receive group message: {json}",
-                JsonSerializer.Serialize(recvMessages.Select(m => m.ToPreviewString())));
+            logger.LogInformation("Receive group message: {json}",
+                JsonSerializer.Serialize(receivedMessage.Select(m => m.ToPreviewString())
+                    , _jsonSerializerOptions));
 
-            var textMessages = recvMessages
+            var textMessages = receivedMessage
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
@@ -135,14 +141,15 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
             }
         };
 
-        _botService.Invoker.OnFriendMessageReceived += async (_, @event) =>
+        botService.Invoker.OnFriendMessageReceived += async (_, @event) =>
         {
-            var recvMessages = @event.Chain;
+            var receivedMessage = @event.Chain;
 
-            _logger.LogInformation("Receive friend message: {json}",
-                JsonSerializer.Serialize(recvMessages.Select(m => m.ToPreviewString())));
+            logger.LogInformation("Receive group message: {json}",
+                JsonSerializer.Serialize(receivedMessage.Select(m => m.ToPreviewString())
+                    , _jsonSerializerOptions));
 
-            var textMessages = recvMessages
+            var textMessages = receivedMessage
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 

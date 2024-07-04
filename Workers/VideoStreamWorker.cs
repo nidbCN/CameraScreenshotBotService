@@ -100,7 +100,7 @@ public sealed class VideoStreamWorker : BackgroundService
             //    _ => ffmpeg.AV_LOG_INFO
             //});
 
-            //// do not convert to local function
+             
             //av_log_set_callback_callback logCallback = (p0, level, format, vl) =>
             //{
             //    if (level > ffmpeg.av_log_get_level()) return;
