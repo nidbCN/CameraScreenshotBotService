@@ -7,33 +7,38 @@ using Microsoft.Extensions.Options;
 
 namespace CameraScreenshotBotService.Services;
 
-public sealed unsafe class ScreenshotService
+public sealed class ScreenshotService : IDisposable
 {
     private readonly ILogger<ScreenshotService> _logger;
     private readonly StreamOption _streamOption;
 
-    private readonly SwsContext* _pixConverterCtx;
+    private readonly unsafe SwsContext* _pixConverterCtx;
+    private readonly unsafe AVCodecContext* _decoderCtx;
+    private readonly unsafe AVCodecContext* _encoderCtx;
 
-    private readonly AVCodecContext* _decoderCtx;
-    private readonly AVCodecContext* _encoderCtx;
+    private unsafe AVFormatContext* _inputFormatCtx;
+    private readonly unsafe AVDictionary* _openOptions;
 
-    private AVFormatContext* _inputFormatCtx;
-    private readonly AVDictionary* _openOptions;
-
-    private readonly AVFrame* _inputFrame;
-    private readonly AVPacket* _pPacket;
-    private AVFrame* _receivedFrame;
+    private readonly unsafe AVFrame* _inputFrame;
+    private readonly unsafe AVPacket* _pPacket;
+    private unsafe AVFrame* _receivedFrame;
 
     private readonly int _streamIndex;
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public bool IsDecoding { get; private set; }
-    public byte[]? CacheImage { get; private set; }
-    public DateTime CacheTime { get; private set; }
+    public byte[]? LastCapturedImage { get; private set; }
+    public DateTime LastCaptureTime { get; private set; }
 
-    public ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
+    public string StreamCodecName { get; }
+    public AVPixelFormat StreamPixelFormat { get; }
+    public int StreamHeight { get; }
+    public int StreamWidth { get; }
+
+    public unsafe ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
-        _streamOption = option?.Value
+        _streamOption = option.Value
             ?? throw new ArgumentNullException(nameof(option));
 
         if (_streamOption.Url is null)
@@ -75,6 +80,7 @@ public sealed unsafe class ScreenshotService
             StreamHeight = _decoderCtx->height;
         }
 
+
         CloseInput();
 
         // 初始化 PNG 编码器
@@ -96,8 +102,8 @@ public sealed unsafe class ScreenshotService
         {
             // 初始化 SwsContext
             _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight, StreamPixelFormat,
-                              StreamWidth, StreamHeight, _encoderCtx->pix_fmt,
-                              ffmpeg.SWS_BICUBIC, null, null, null);
+                StreamWidth, StreamHeight, _encoderCtx->pix_fmt,
+                ffmpeg.SWS_BICUBIC, null, null, null);
         }
 
         _pPacket = ffmpeg.av_packet_alloc();
@@ -145,24 +151,24 @@ public sealed unsafe class ScreenshotService
         }
     }
 
-    private void OpenInput()
+    private unsafe void OpenInput()
     {
-        _logger.LogInformation("Open Input.");
+        _logger.LogInformation("Open Input {url}.", _streamOption.Url.AbsoluteUri);
 
         // 初始化 ffmpeg 输入
         _inputFormatCtx = ffmpeg.avformat_alloc_context();
         _receivedFrame = ffmpeg.av_frame_alloc();
-        var fotmatCtx = _inputFormatCtx;
+        var formatCtx = _inputFormatCtx;
 
         // 设置超时
         var openOptions = _openOptions;
 
         // 打开流
-        ffmpeg.avformat_open_input(&fotmatCtx, _streamOption.Url.AbsoluteUri, null, &openOptions)
+        ffmpeg.avformat_open_input(&formatCtx, _streamOption.Url.AbsoluteUri, null, &openOptions)
             .ThrowExceptionIfError();
     }
 
-    private void CloseInput()
+    private unsafe void CloseInput()
     {
         _logger.LogInformation("Close Input.");
 
@@ -173,12 +179,7 @@ public sealed unsafe class ScreenshotService
         ffmpeg.av_frame_unref(_receivedFrame);
     }
 
-    public string StreamCodecName { get; }
-    public AVPixelFormat StreamPixelFormat { get; }
-    public int StreamHeight { get; }
-    public int StreamWidth { get; }
-
-    public void Dispose()
+    public unsafe void Dispose()
     {
         var pFrame = _inputFrame;
         ffmpeg.av_frame_free(&pFrame);
@@ -193,34 +194,36 @@ public sealed unsafe class ScreenshotService
         ffmpeg.sws_freeContext(_pixConverterCtx);
     }
 
-    public bool TryDecodeNextKeyFrame(out AVFrame* frame)
+    public unsafe bool TryDecodeNextKeyFrame(out AVFrame* frame)
     {
         ffmpeg.av_frame_unref(_inputFrame);
         ffmpeg.av_frame_unref(_receivedFrame);
         var ret = 0;
 
-        for (var cnt = 0; cnt < 120; cnt++)
+        for (var cnt = 0; cnt < 60; cnt++)
         {
             do
             {
+                // 尝试解码一个包
                 try
                 {
+                    // 遍历流找到 bestStream
                     do
                     {
-                        // 遍历流找到 bestStream
                         ffmpeg.av_packet_unref(_pPacket);
                         ret = ffmpeg.av_read_frame(_inputFormatCtx, _pPacket);
 
                         // 视频流已经结束
                         if (ret == ffmpeg.AVERROR_EOF)
                         {
-                            frame = _inputFrame;
+                            frame = null;
                             return false;
                         }
 
                         ret.ThrowExceptionIfError();
                     } while (_pPacket->stream_index != _streamIndex);
 
+                    // 发送包到解码器
                     ffmpeg.avcodec_send_packet(_decoderCtx, _pPacket).ThrowExceptionIfError();
                 }
                 finally
@@ -229,33 +232,54 @@ public sealed unsafe class ScreenshotService
                 }
 
                 ret = ffmpeg.avcodec_receive_frame(_decoderCtx, _inputFrame);
-
                 // -11 资源暂不可用时候重试
             } while (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN));
 
-            _logger.LogInformation("Frame counter: {cnt}", ++cnt);
+            // 非关键帧，跳过
+            if (_inputFrame->pict_type != AVPictureType.AV_PICTURE_TYPE_I) continue;
 
-            // 关键帧
-            if (_inputFrame->pict_type == AVPictureType.AV_PICTURE_TYPE_I)
-            {
-                break;
-            }
+            // 关键帧，退出循环
+            _logger.LogInformation("Unpack frame counter: {cnt}, frame type {type}",
+                cnt, _inputFrame->pict_type.ToString());
+            break;
         }
 
         ret.ThrowExceptionIfError();
 
+        // 硬件解码数据转换
         if (_decoderCtx->hw_device_ctx != null)
         {
             ffmpeg.av_hwframe_transfer_data(_receivedFrame, _inputFrame, 0).ThrowExceptionIfError();
             frame = _receivedFrame;
         }
         else
+        {
             frame = _inputFrame;
+        }
 
         return true;
     }
 
-    public bool TryCapturePngImage(out byte[]? image)
+    public async Task<(bool, byte[]?)> CapturePngImageAsync(CancellationToken ctx = default)
+    {
+        await _semaphore.WaitAsync(ctx);
+
+        try
+        {
+            if (LastCapturedImage != null &&
+                DateTime.Now - LastCaptureTime <= TimeSpan.FromSeconds(20))
+                return (true, LastCapturedImage);
+
+            var result = TryCapturePngImageUnsafe(out var image);
+            return (result, image);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    public unsafe bool TryCapturePngImageUnsafe(out byte[]? image)
     {
         OpenInput();
         IsDecoding = true;
@@ -333,8 +357,8 @@ public sealed unsafe class ScreenshotService
 
         // result
         image = memStream.ToArray();
-        CacheImage = image;
-        CacheTime = DateTime.Now;
+        LastCapturedImage = image;
+        LastCaptureTime = DateTime.Now;
         memStream.Close();
 
         IsDecoding = false;
@@ -342,14 +366,14 @@ public sealed unsafe class ScreenshotService
         return result;
     }
 
-    private static void WriteToStream(Stream stream, AVPacket* packet)
+    private static unsafe void WriteToStream(Stream stream, AVPacket* packet)
     {
         var buffer = new byte[packet->size];
         Marshal.Copy((IntPtr)packet->data, buffer, 0, packet->size);
         stream.Write(buffer, 0, packet->size);
     }
 
-    public IReadOnlyDictionary<string, string?>? GetContextInfo()
+    public unsafe IReadOnlyDictionary<string, string?> GetContextInfo()
     {
         AVDictionaryEntry* tag = null;
 
