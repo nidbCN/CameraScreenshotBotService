@@ -29,11 +29,12 @@ public class BotService : IDisposable
         var keyStore = _storageService.LoadKeyStore();
         var deviceInfo = _storageService.LoadDeviceInfo();
 
-        if (keyStore is null || deviceInfo is null)
+        //if (keyStore is null || deviceInfo is null)
+        if (true)
         {
             deviceInfo = BotDeviceInfo.GenerateInfo();
             deviceInfo.DeviceName = "windows-camera";
-            keyStore = new BotKeystore();
+            keyStore = new ();
 
             // 首次登陆
             Bot = BotFactory.Create(new()
@@ -70,7 +71,7 @@ public class BotService : IDisposable
                 Protocol = Protocols.Linux,
                 CustomSignProvider = _signer,
             }, deviceInfo, keyStore);
-            var logined = Bot.LoginByPassword().Result;
+            var logined = Bot.LoginByPassword().GetAwaiter().GetResult();
             if (!logined)
             {
                 _logger.LogError("Login failed!");

@@ -26,6 +26,10 @@ public sealed unsafe class ScreenshotService
 
     private readonly int _streamIndex;
 
+    public bool IsDecoding { get; private set; }
+    public byte[]? CacheImage { get; private set; }
+    public DateTime CacheTime { get; private set; }
+
     public ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
@@ -91,7 +95,7 @@ public sealed unsafe class ScreenshotService
 
         {
             // 初始化 SwsContext
-            _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight,StreamPixelFormat,
+            _pixConverterCtx = ffmpeg.sws_getContext(StreamWidth, StreamHeight, StreamPixelFormat,
                               StreamWidth, StreamHeight, _encoderCtx->pix_fmt,
                               ffmpeg.SWS_BICUBIC, null, null, null);
         }
@@ -141,7 +145,7 @@ public sealed unsafe class ScreenshotService
         }
     }
 
-    public void OpenInput()
+    private void OpenInput()
     {
         _logger.LogInformation("Open Input.");
 
@@ -158,7 +162,7 @@ public sealed unsafe class ScreenshotService
             .ThrowExceptionIfError();
     }
 
-    public void CloseInput()
+    private void CloseInput()
     {
         _logger.LogInformation("Close Input.");
 
@@ -193,9 +197,9 @@ public sealed unsafe class ScreenshotService
     {
         ffmpeg.av_frame_unref(_inputFrame);
         ffmpeg.av_frame_unref(_receivedFrame);
-        int ret = 0;
+        var ret = 0;
 
-        for (int cnt = 0; cnt < 120; cnt++)
+        for (var cnt = 0; cnt < 120; cnt++)
         {
             do
             {
@@ -253,6 +257,9 @@ public sealed unsafe class ScreenshotService
 
     public bool TryCapturePngImage(out byte[]? image)
     {
+        OpenInput();
+        IsDecoding = true;
+
         var result = false;
         image = null;
 
@@ -284,7 +291,7 @@ public sealed unsafe class ScreenshotService
 
         using var memStream = new MemoryStream();
 
-        int ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
+        var ret = ffmpeg.avcodec_receive_packet(_encoderCtx, _pPacket);
         if (ret < 0)
         {
             // 首次编码出现 EOF 等，不正常
@@ -326,7 +333,12 @@ public sealed unsafe class ScreenshotService
 
         // result
         image = memStream.ToArray();
+        CacheImage = image;
+        CacheTime = DateTime.Now;
         memStream.Close();
+
+        IsDecoding = false;
+        CloseInput();
         return result;
     }
 

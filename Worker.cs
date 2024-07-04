@@ -58,7 +58,8 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                     {
                         _logger.LogInformation("Recv captcha, ticket {t}, randstr {s}", ticket, randstr);
                         _botService.Bot.SubmitCaptcha(ticket, randstr);
-                    }else
+                    }
+                    else
                     {
                         throw new ApplicationException("Can't boot without captcha.");
                     }
@@ -80,40 +81,56 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
         {
             var recvMessages = @event.Chain;
 
-            _logger.LogInformation("Receive friend message: {json}",
+            _logger.LogInformation("Receive group message: {json}",
                 JsonSerializer.Serialize(recvMessages.Select(m => m.ToPreviewString())));
 
             var textMessages = recvMessages
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text?.StartsWith("让我看看！") ?? false))
+            if (textMessages.Any(m => m?.Text.StartsWith("让我看看！") ?? false))
             {
                 var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
 
                 try
                 {
-                    _screenshotService.OpenInput();
-                    var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
+                    var cacheTime = DateTime.Now - _screenshotService.CacheTime;
 
-                    if (!captureResult || imageBytes is null)
+                    if (_screenshotService.CacheImage != null
+                        && cacheTime < TimeSpan.FromSeconds(10))
                     {
-                        _logger.LogError("Decode failed, send error message.");
-                        sendMessage.Text("杰哥不要！（图像编解码失败）");
+                        _logger.LogInformation("Send cached image from {time} ago.",
+                            cacheTime);
+                        sendMessage.Image(_screenshotService.CacheImage);
                     }
                     else
                     {
-                        sendMessage.Image(imageBytes);
+                        do
+                        {
+                            if (screenshotService.IsDecoding) continue;
+
+                            var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
+                            if (!captureResult || imageBytes is null)
+                            {
+                                _logger.LogError("Decode failed, send error message.");
+                                sendMessage.Text("杰哥不要！（图像编解码失败）");
+                            }
+                            else
+                            {
+                                sendMessage.Image(imageBytes);
+                            }
+
+                            break;
+                        } while (!stoppingToken.IsCancellationRequested);
                     }
                 }
-                catch (ApplicationException e)
+                catch (Exception e)
                 {
-                    _logger.LogError("Faile to decode and encode, {error}", e.Message);
+                    _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
                     sendMessage.Text("杰哥不要！（图像编码器崩溃）");
                 }
                 finally
                 {
-                    _screenshotService.CloseInput();
                     await _botService.Bot.SendMessage(sendMessage.Build());
                 }
             }
@@ -130,39 +147,55 @@ public class Worker(ILogger<Worker> logger, ScreenshotService screenshotService,
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text?.StartsWith("让我看看") ?? false))
+            if (textMessages.Any(m => m?.Text.StartsWith("让我看看") ?? false))
             {
                 var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
 
                 try
                 {
-                    _screenshotService.OpenInput();
-                    var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
+                    var cacheTime = DateTime.Now - _screenshotService.CacheTime;
 
-                    if (!captureResult || imageBytes is null)
+                    if (_screenshotService.CacheImage != null
+                        && cacheTime < TimeSpan.FromSeconds(10))
                     {
-                        _logger.LogError("Decode failed, send error message.");
-                        sendMessage.Text("杰哥不要！（图像编解码失败）");
+                        _logger.LogInformation("Send cached image from {time} ago.",
+                            cacheTime);
+                        sendMessage.Image(_screenshotService.CacheImage);
                     }
                     else
                     {
-                        sendMessage.Image(imageBytes);
+                        do
+                        {
+                            if (screenshotService.IsDecoding) continue;
+
+                            var captureResult = _screenshotService.TryCapturePngImage(out var imageBytes);
+                            if (!captureResult || imageBytes is null)
+                            {
+                                _logger.LogError("Decode failed, send error message.");
+                                sendMessage.Text("杰哥不要！（图像编解码失败）");
+                            }
+                            else
+                            {
+                                sendMessage.Image(imageBytes);
+                            }
+
+                            break;
+                        } while (!stoppingToken.IsCancellationRequested);
                     }
                 }
-                catch (ApplicationException e)
+                catch (Exception e)
                 {
-                    _logger.LogError("Faile to decode and encode, {error}", e.Message);
+                    _logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
                     sendMessage.Text("杰哥不要！（图像编解码器崩溃）");
                 }
                 finally
                 {
-                    _screenshotService.CloseInput();
                     await _botService.Bot.SendMessage(sendMessage.Build());
                 }
             }
         };
 
-        await Task.Delay(1000, stoppingToken);
+        await Task.Delay(200, stoppingToken);
     }
 }
 

@@ -30,7 +30,8 @@ public sealed class VideoStreamWorker : BackgroundService
         _logger = logger;
         _config = config;
 
-        var url = config["Camera:Url"] ?? throw new ArgumentNullException("CameraUrl");
+        var url = config["Camera:Url"]
+            ?? throw new ArgumentNullException("Camera:Url");
 
         // 初始化 ffmpeg 输入
         _inputFormatCtx = ffmpeg.avformat_alloc_context();
