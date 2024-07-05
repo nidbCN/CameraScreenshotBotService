@@ -73,13 +73,20 @@ public sealed class ScreenshotService
             ffmpeg.avcodec_open2(_decoderCtx, decoder, null).ThrowExceptionIfError();
 
             StreamCodecName = ffmpeg.avcodec_get_name(decoder->id);
+
+            var defaultPixelFormat = AVPixelFormat.AV_PIX_FMT_YUV420P;
+            if (_decoderCtx->codec is not null)
+            {
+                defaultPixelFormat = *_decoderCtx->codec->pix_fmts;
+            }
+
             var pixFormat = _decoderCtx->pix_fmt switch
             {
                 AVPixelFormat.AV_PIX_FMT_YUVJ420P => AVPixelFormat.AV_PIX_FMT_YUV420P,
                 AVPixelFormat.AV_PIX_FMT_YUVJ422P => AVPixelFormat.AV_PIX_FMT_YUV422P,
                 AVPixelFormat.AV_PIX_FMT_YUVJ444P => AVPixelFormat.AV_PIX_FMT_YUV444P,
                 AVPixelFormat.AV_PIX_FMT_YUVJ440P => AVPixelFormat.AV_PIX_FMT_YUV440P,
-                _ => *_decoderCtx->codec->pix_fmts,
+                _ => defaultPixelFormat,
             };
             StreamPixelFormat = pixFormat;
             StreamWidth = _decoderCtx->width;
