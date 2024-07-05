@@ -5,6 +5,7 @@ using CameraScreenshotBotService.Extensions;
 using CameraScreenshotBotService.Configs;
 using Microsoft.Extensions.Options;
 using static System.Net.Mime.MediaTypeNames;
+using vectors = FFmpeg.AutoGen.Abstractions.vectors;
 
 namespace CameraScreenshotBotService.Services;
 
@@ -133,25 +134,45 @@ public sealed class ScreenshotService
     {
         if (level > ffmpeg.av_log_get_level()) return;
 
-        var lineSize = 1024;
+        const int lineSize = 1024;
         var lineBuffer = stackalloc byte[lineSize];
         var printPrefix = 1;
+
         ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
         var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
-        switch (level)
+
+        using (_logger.BeginScope(nameof(ffmpeg)))
         {
-            case ffmpeg.AV_LOG_DEBUG:
-                _logger.LogDebug("ffmpeg: {msg}", line);
-                break;
-            case ffmpeg.AV_LOG_WARNING:
-                _logger.LogWarning("ffmpeg: {msg}", line);
-                break;
-            case ffmpeg.AV_LOG_INFO:
-                _logger.LogInformation("ffmpeg: {msg}", line);
-                break;
-            default:
-                _logger.LogWarning("ffmpeg, unknown level {level}: {msg}", level, line);
-                break;
+            switch (level)
+            {
+                case ffmpeg.AV_LOG_PANIC:
+                    _logger.LogCritical("[panic]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_FATAL:
+                    _logger.LogCritical("[fatal]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_ERROR:
+                    _logger.LogError("[error]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_WARNING:
+                    _logger.LogWarning("[warning]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_INFO:
+                    _logger.LogInformation("[info]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_VERBOSE:
+                    _logger.LogDebug("[verbose]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_DEBUG:
+                    _logger.LogDebug("[debug]{msg}", line);
+                    break;
+                case ffmpeg.AV_LOG_TRACE:
+                    _logger.LogTrace("[trace]{msg}", line);
+                    break;
+                default:
+                    _logger.LogWarning("[level {level}]{msg}", level, line);
+                    break;
+            }
         }
     }
 
@@ -228,6 +249,9 @@ public sealed class ScreenshotService
                         ret.ThrowExceptionIfError();
                     } while (_pPacket->stream_index != _streamIndex);
 
+                    _logger.LogDebug("Find stream {index} packet. pts {pts}, dts {dts}, timebase {den}/{num}",
+                        _pPacket->stream_index, _pPacket->pts, _pPacket->dts, _pPacket->time_base.den, _pPacket->time_base.num);
+
                     // 发送包到解码器
                     ffmpeg.avcodec_send_packet(_decoderCtx, _pPacket).ThrowExceptionIfError();
                 }
@@ -277,8 +301,6 @@ public sealed class ScreenshotService
                 _logger.LogInformation("Return image cached {time} ago.", captureTimeSpan);
                 return (true, LastCapturedImage);
             }
-
-            _logger.LogInformation("Cache image {time} ago expired, capture new.", captureTimeSpan);
         }
         finally
         {
@@ -289,6 +311,7 @@ public sealed class ScreenshotService
         {
             await _semaphore.WaitAsync(cancellationToken);
 
+            _logger.LogInformation("Cache image expired, capture new.");
             try
             {
                 var success = TryCapturePngImageUnsafe(out var image);
