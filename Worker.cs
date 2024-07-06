@@ -10,7 +10,7 @@ using LogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 namespace CameraScreenshotBotService;
 
 public class Worker(ILogger<Worker> logger,
-    ScreenshotService screenshotService,
+    CaptureService screenshotService,
     BotService botService) : BackgroundService
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions = new()
@@ -22,7 +22,7 @@ public class Worker(ILogger<Worker> logger,
     {
         try
         {
-            var (result, image) = await screenshotService.CapturePngImageAsync();
+            var (result, image) = await screenshotService.CaptureImageAsync();
 
             if (!result || image is null)
             {
@@ -49,6 +49,8 @@ public class Worker(ILogger<Worker> logger,
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await botService.LoginAsync(stoppingToken);
+
         botService.Invoker.OnBotLogEvent += (_, @event) =>
         {
             switch (@event.Level)
@@ -124,7 +126,7 @@ public class Worker(ILogger<Worker> logger,
             logger.LogInformation("Login Success!");
         };
 
-        botService.Invoker.OnGroupMessageReceived += async (_, @event) =>
+        botService.Invoker.OnGroupMessageReceived += async (t, @event) =>
         {
             var receivedMessage = @event.Chain;
 

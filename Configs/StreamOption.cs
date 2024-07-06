@@ -6,7 +6,7 @@ public class StreamOption
     public uint ConnectTimeout { get; set; } = 1200;
     public uint CodecTimeout { get; set; } = 100;
     public uint KeyframeSearchMax { get; set; } = 60;
-    public uint DecodeThreads { get; set; } = 4;
+    public uint CodecThreads { get; set; } = 4;
     public string FfmpegRoot { get; set; } = null!;
     public string? LogLevel { get; set; }
 }

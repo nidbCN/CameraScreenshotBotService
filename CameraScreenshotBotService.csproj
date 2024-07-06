@@ -20,12 +20,9 @@
   <ItemGroup>
     <PackageReference Include="FFmpeg.AutoGen" Version="6.1.0" />
     <PackageReference Include="FFmpeg.AutoGen.Bindings.DynamicallyLoaded" Version="6.1.0" />
-    <PackageReference Include="Lagrange.Core" Version="0.0.2" />
+    <PackageReference Include="Lagrange.Core" Version="0.2.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.5" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Lagrange.Core\Utility\Network\" />
   </ItemGroup>
 </Project>

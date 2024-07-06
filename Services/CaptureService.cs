@@ -12,15 +12,15 @@ public unsafe struct AVCodecContextWrapper(AVCodecContext* ctx)
     public AVCodecContext* Value { get; } = ctx;
 }
 
-public sealed class ScreenshotService
+public sealed class CaptureService
 {
-    private readonly ILogger<ScreenshotService> _logger;
+    private readonly ILogger<CaptureService> _logger;
     private readonly StreamOption _streamOption;
 
     private readonly unsafe AVCodecContext* _decoderCtx;
-    private readonly unsafe AVCodecContext* _webpEncoderCtx;
+    private readonly unsafe AVCodecContext* _encoderCtx;
 
-    private unsafe AVFormatContext* _inputFormatCtx;
+    private unsafe AVFormatContext* _inputFormatCtx = ffmpeg.avformat_alloc_context();
     private readonly unsafe AVDictionary* _openOptions = null;
 
     private readonly unsafe AVFrame* _frame = ffmpeg.av_frame_alloc();
@@ -31,6 +31,7 @@ public sealed class ScreenshotService
 
     private readonly int _streamIndex;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly CancellationTokenSource _codecCancellationToken;
 
     public byte[]? LastCapturedImage { get; private set; }
     public DateTime LastCaptureTime { get; private set; }
@@ -40,14 +41,17 @@ public sealed class ScreenshotService
     public int StreamHeight { get; }
     public int StreamWidth { get; }
 
-    public unsafe ScreenshotService(ILogger<ScreenshotService> logger, IOptions<StreamOption> option)
+    public unsafe CaptureService(ILogger<CaptureService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
         _logCallback = FfmpegLogInvoke;
-        _streamOption = option.Value
-            ?? throw new ArgumentNullException(nameof(option));
+        _streamOption = option.Value;
+
         if (_streamOption.Url is null)
             throw new ArgumentNullException(nameof(option), "StreamOption.Url can not be null.");
+
+        _codecCancellationToken = new(TimeSpan.FromMilliseconds(
+            _streamOption.CodecTimeout));
 
         // 设置超时
         var openOptions = _openOptions;
@@ -60,25 +64,21 @@ public sealed class ScreenshotService
             ffmpeg.avformat_find_stream_info(_inputFormatCtx, null)
                 .ThrowExceptionIfError();
 
+            // 匹配解码器信息
             AVCodec* decoder = null;
             _streamIndex = ffmpeg
                 .av_find_best_stream(_inputFormatCtx, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0)
                 .ThrowExceptionIfError();
 
-            _decoderCtx = ffmpeg.avcodec_alloc_context3(decoder);
-            ffmpeg.avcodec_parameters_to_context(_decoderCtx, _inputFormatCtx->streams[_streamIndex]->codecpar)
-                .ThrowExceptionIfError();
-            _decoderCtx->thread_count = (int)_streamOption.DecodeThreads;
-            _decoderCtx->skip_frame = AVDiscard.AVDISCARD_NONKEY;
-
-            ffmpeg.avcodec_open2(_decoderCtx, decoder, null).ThrowExceptionIfError();
-
-            var defaultPixelFormat = AVPixelFormat.AV_PIX_FMT_YUV420P;
-
-            if (_decoderCtx->codec != null && _decoderCtx->codec->pix_fmts != null)
+            // 创建解码器
+            _decoderCtx = CreateCodecCtx(decoder, codec =>
             {
-                defaultPixelFormat = *_decoderCtx->codec->pix_fmts;
-            }
+                ffmpeg.avcodec_parameters_to_context(codec.Value, _inputFormatCtx->streams[_streamIndex]->codecpar)
+                    .ThrowExceptionIfError();
+
+                codec.Value->thread_count = (int)_streamOption.CodecThreads;
+                codec.Value->skip_frame = AVDiscard.AVDISCARD_NONKEY;
+            });
 
             var pixFormat = _decoderCtx->pix_fmt switch
             {
@@ -86,9 +86,10 @@ public sealed class ScreenshotService
                 AVPixelFormat.AV_PIX_FMT_YUVJ422P => AVPixelFormat.AV_PIX_FMT_YUV422P,
                 AVPixelFormat.AV_PIX_FMT_YUVJ444P => AVPixelFormat.AV_PIX_FMT_YUV444P,
                 AVPixelFormat.AV_PIX_FMT_YUVJ440P => AVPixelFormat.AV_PIX_FMT_YUV440P,
-                _ => defaultPixelFormat,
+                _ => _decoderCtx->pix_fmt,
             };
 
+            // 设置输入流信息
             StreamDecoderName = ffmpeg.avcodec_get_name(decoder->id);
             StreamPixelFormat = pixFormat;
             StreamWidth = _decoderCtx->width;
@@ -99,16 +100,17 @@ public sealed class ScreenshotService
         #endregion
 
         #region 初始化图片编码器
-
         {
-            _webpEncoderCtx = CreateEncoderCtx("libwebp",
+            _encoderCtx = CreateCodecCtx("libwebp",
                 config =>
             {
                 config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
                 config.Value->gop_size = 1;
+                config.Value->thread_count = (int)_streamOption.CodecThreads;
                 config.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
-                //ffmpeg.av_opt_set(config.Value->priv_data, "lossless", "1", ffmpeg.AV_OPT_SEARCH_CHILDREN)
-                //    .ThrowExceptionIfError();
+                config.Value->width = StreamWidth;
+                config.Value->height = StreamHeight;
+
                 ffmpeg.av_opt_set(config.Value->priv_data, "preset", "photo", ffmpeg.AV_OPT_SEARCH_CHILDREN)
                     .ThrowExceptionIfError();
             });
@@ -118,13 +120,20 @@ public sealed class ScreenshotService
         // 设置日志
         if (option.Value.LogLevel is not null)
         {
-            ffmpeg.av_log_set_level(option.Value.LogLevel.ToUpper() switch
+            var level = option.Value.LogLevel.ToUpper() switch
             {
-                "DEBUG" => ffmpeg.AV_LOG_TRACE,
+                "TRACE" => ffmpeg.AV_LOG_TRACE,
+                "VERBOSE" => ffmpeg.AV_LOG_VERBOSE,
+                "DEBUG" => ffmpeg.AV_LOG_DEBUG,
+                "INFO" => ffmpeg.AV_LOG_INFO,
                 "WARNING" => ffmpeg.AV_LOG_WARNING,
                 "ERROR" => ffmpeg.AV_LOG_ERROR,
+                "FATAL" => ffmpeg.AV_LOG_FATAL,
+                "PANIC" => ffmpeg.AV_LOG_PANIC,
                 _ => ffmpeg.AV_LOG_INFO,
-            });
+            };
+
+            ffmpeg.av_log_set_level(level);
             ffmpeg.av_log_set_callback(_logCallback);
         }
     }
@@ -140,40 +149,44 @@ public sealed class ScreenshotService
     {
         if (level > ffmpeg.av_log_get_level()) return;
 
-        const int lineSize = 1024;
-        var lineBuffer = stackalloc byte[lineSize];
-        var printPrefix = ffmpeg.AV_LOG_SKIP_REPEATED;
+        const int lineSize = 128;
+        var lineBuffer = stackalloc byte[128];
+        var printPrefix = ffmpeg.AV_LOG_SKIP_REPEATED | ffmpeg.AV_LOG_PRINT_LEVEL;
 
         ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
         var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
+
+        if (line is null) return;
+
+        line = line.ReplaceLineEndings();
 
         using (_logger.BeginScope(nameof(ffmpeg)))
         {
             switch (level)
             {
                 case ffmpeg.AV_LOG_PANIC:
-                    _logger.LogCritical("[panic]{msg}", line);
+                    _logger.LogCritical("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_FATAL:
-                    _logger.LogCritical("[fatal]{msg}", line);
+                    _logger.LogCritical("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_ERROR:
-                    _logger.LogError("[error]{msg}", line);
+                    _logger.LogError("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_WARNING:
-                    _logger.LogWarning("[warning]{msg}", line);
+                    _logger.LogWarning("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_INFO:
-                    _logger.LogInformation("[info]{msg}", line);
+                    _logger.LogInformation("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_VERBOSE:
-                    _logger.LogInformation("[verbose]{msg}", line);
+                    _logger.LogInformation("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_DEBUG:
-                    _logger.LogInformation("[debug]{msg}", line);
+                    _logger.LogInformation("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_TRACE:
-                    _logger.LogInformation("[trace]{msg}", line);
+                    _logger.LogInformation("{msg}", line);
                     break;
                 default:
                     _logger.LogWarning("[level {level}]{msg}", level, line);
@@ -186,8 +199,6 @@ public sealed class ScreenshotService
     {
         _logger.LogInformation("Open Input {url}.", _streamOption.Url.AbsoluteUri);
 
-        // 初始化 ffmpeg 输入
-        _inputFormatCtx = ffmpeg.avformat_alloc_context();
         var formatCtx = _inputFormatCtx;
 
         // 设置超时
@@ -204,20 +215,23 @@ public sealed class ScreenshotService
 
         var formatCtx = _inputFormatCtx;
         ffmpeg.avformat_close_input(&formatCtx);
-        ffmpeg.avformat_free_context(formatCtx);
     }
 
     // 会引发异常，待排查
     public unsafe void Dispose()
     {
+        var formatCtx = _inputFormatCtx;
+        ffmpeg.avformat_free_context(formatCtx);
+
         var pFrame = _frame;
         ffmpeg.av_frame_free(&pFrame);
-
         var pPacket = _packet;
         ffmpeg.av_packet_free(&pPacket);
+        var pWebpOutputFrame = _webpOutputFrame;
+        ffmpeg.av_frame_free(&pWebpOutputFrame);
 
         ffmpeg.avcodec_close(_decoderCtx);
-
+        ffmpeg.avcodec_close(_encoderCtx);
     }
 
     /// <summary>
@@ -284,6 +298,7 @@ public sealed class ScreenshotService
         return true;
     }
 
+    #region 创建编码器
     /// <summary>
     /// 创建编解码器
     /// </summary>
@@ -291,35 +306,33 @@ public sealed class ScreenshotService
     /// <param name="config">是否有效未知</param>
     /// <param name="pixelFormat"></param>
     /// <returns></returns>
-    private unsafe AVCodecContext* CreateEncoderCtx(AVCodecID codecId, Action<AVCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
+    private unsafe AVCodecContext* CreateCodecCtx(AVCodecID codecId, Action<AVCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
     {
         var codec = ffmpeg.avcodec_find_encoder(codecId);
 
-        return CreateEncoderCtx(codec, ctx =>
+        return CreateCodecCtx(codec, ctx =>
         {
             ctx.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
             config?.Invoke(ctx);
         });
     }
 
-    private unsafe AVCodecContext* CreateEncoderCtx(string codecName, Action<AVCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
+    private unsafe AVCodecContext* CreateCodecCtx(string codecName, Action<AVCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
     {
         var codec = ffmpeg.avcodec_find_encoder_by_name(codecName);
 
-        return CreateEncoderCtx(codec, ctx =>
+        return CreateCodecCtx(codec, ctx =>
         {
             ctx.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
             config?.Invoke(ctx);
         });
     }
 
-    private unsafe AVCodecContext* CreateEncoderCtx(AVCodec* codec, Action<AVCodecContextWrapper>? config = null)
+    private unsafe AVCodecContext* CreateCodecCtx(AVCodec* codec, Action<AVCodecContextWrapper>? config = null)
     {
         // 编解码器
         var ctx = ffmpeg.avcodec_alloc_context3(codec);
 
-        ctx->width = StreamWidth;
-        ctx->height = StreamHeight;
         ctx->time_base = new() { num = 1, den = 25 }; // 设置时间基准
         ctx->framerate = new() { num = 25, den = 1 };
 
@@ -329,6 +342,7 @@ public sealed class ScreenshotService
 
         return ctx;
     }
+    #endregion
 
     /// <summary>
     /// 创建转换上下文
@@ -342,7 +356,7 @@ public sealed class ScreenshotService
             targetWidth, targetHeight, targetCodecCtx->pix_fmt,
             ffmpeg.SWS_BICUBIC, null, null, null);
 
-    public async Task<(bool, byte[]?)> CapturePngImageAsync(CancellationToken cancellationToken = default)
+    public async Task<(bool, byte[]?)> CaptureImageAsync(CancellationToken cancellationToken = default)
     {
         await _semaphore.WaitAsync(cancellationToken);
 
@@ -406,7 +420,7 @@ public sealed class ScreenshotService
         CloseInput();
 
         var outFrame = frame;
-        var encoderCtx = _webpEncoderCtx;
+        var encoderCtx = _encoderCtx;
 
         if (outFrame->format != (int)encoderCtx->pix_fmt)
         {
