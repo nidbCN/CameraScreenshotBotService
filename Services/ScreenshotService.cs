@@ -18,15 +18,12 @@ public sealed class ScreenshotService
     private readonly StreamOption _streamOption;
 
     private readonly unsafe AVCodecContext* _decoderCtx;
-    private readonly unsafe AVCodecContext* _pngEncoderCtx;
     private readonly unsafe AVCodecContext* _webpEncoderCtx;
-    private readonly unsafe SwsContext* _Yuv420pToRgb24ConverterCtx;
 
     private unsafe AVFormatContext* _inputFormatCtx;
     private readonly unsafe AVDictionary* _openOptions = null;
 
     private readonly unsafe AVFrame* _frame = ffmpeg.av_frame_alloc();
-    private readonly unsafe AVFrame* _pngOutputFrame = ffmpeg.av_frame_alloc();
     private readonly unsafe AVFrame* _webpOutputFrame = ffmpeg.av_frame_alloc();
     private readonly unsafe AVPacket* _packet = ffmpeg.av_packet_alloc();
 
@@ -72,6 +69,8 @@ public sealed class ScreenshotService
             ffmpeg.avcodec_parameters_to_context(_decoderCtx, _inputFormatCtx->streams[_streamIndex]->codecpar)
                 .ThrowExceptionIfError();
             _decoderCtx->thread_count = (int)_streamOption.DecodeThreads;
+            _decoderCtx->skip_frame = AVDiscard.AVDISCARD_NONKEY;
+
             ffmpeg.avcodec_open2(_decoderCtx, decoder, null).ThrowExceptionIfError();
 
             var defaultPixelFormat = AVPixelFormat.AV_PIX_FMT_YUV420P;
@@ -102,17 +101,19 @@ public sealed class ScreenshotService
         #region 初始化图片编码器
 
         {
-            _pngEncoderCtx = CreateEncoderCtx(AVCodecID.AV_CODEC_ID_PNG);
-
             _webpEncoderCtx = CreateEncoderCtx("libwebp",
                 config =>
             {
                 config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+                config.Value->gop_size = 1;
+                config.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
+                //ffmpeg.av_opt_set(config.Value->priv_data, "lossless", "1", ffmpeg.AV_OPT_SEARCH_CHILDREN)
+                //    .ThrowExceptionIfError();
+                ffmpeg.av_opt_set(config.Value->priv_data, "preset", "photo", ffmpeg.AV_OPT_SEARCH_CHILDREN)
+                    .ThrowExceptionIfError();
             });
         }
         #endregion
-
-        _Yuv420pToRgb24ConverterCtx = CreateSwsContext(_pngEncoderCtx, StreamWidth, StreamHeight);
 
         // 设置日志
         if (option.Value.LogLevel is not null)
@@ -141,7 +142,7 @@ public sealed class ScreenshotService
 
         const int lineSize = 1024;
         var lineBuffer = stackalloc byte[lineSize];
-        var printPrefix = 1;
+        var printPrefix = ffmpeg.AV_LOG_SKIP_REPEATED;
 
         ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
         var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
@@ -217,7 +218,6 @@ public sealed class ScreenshotService
 
         ffmpeg.avcodec_close(_decoderCtx);
 
-        ffmpeg.sws_freeContext(_Yuv420pToRgb24ConverterCtx);
     }
 
     /// <summary>
@@ -225,64 +225,53 @@ public sealed class ScreenshotService
     /// </summary>
     /// <param name="frame">帧指针，用完后需要使用 unref 释放</param>
     /// <returns></returns>
-    public unsafe bool TryDecodeNextKeyFrame(out AVFrame* frame)
+    public unsafe bool TryDecodeNextFrame(out AVFrame* frame)
     {
-        var times = _streamOption.KeyframeSearchMax;
-
-        for (var cnt = 0; cnt < times; cnt++)
+        int decodeResult;
+        do
         {
-            int decodeResult;
-            do
+            // 尝试解码一个包
+            try
             {
-                // 尝试解码一个包
-                try
-                {
-                    // 遍历流找到 bestStream
-                    do
-                    {
-                        var result = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
-
-                        // 视频流已经结束
-                        if (result == ffmpeg.AVERROR_EOF)
-                        {
-                            frame = null;
-                            return false;
-                        }
-                        result.ThrowExceptionIfError();
-                    } while (_packet->stream_index != _streamIndex);
-
-                    // 取到了 stream 中的包
-                    _logger.LogDebug("Find stream {index} packet. pts {pts}, dts {dts}, timebase {den}/{num}",
-                        _packet->stream_index, _packet->pts, _packet->dts, _packet->time_base.den, _packet->time_base.num);
-
-                    // 发送包到解码器
-                    ffmpeg.avcodec_send_packet(_decoderCtx, _packet)
-                        .ThrowExceptionIfError();
-                }
-                finally
+                // 遍历流找到 bestStream
+                do
                 {
                     ffmpeg.av_packet_unref(_packet);
-                }
+                    var result = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
 
-                ffmpeg.av_frame_unref(_frame);
-                decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
-                // -11 资源暂不可用时候重试
-            } while (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN));
+                    // 视频流已经结束
+                    if (result == ffmpeg.AVERROR_EOF)
+                    {
+                        _logger.LogError("Receive EOF in stream, return.");
+                        frame = null;
+                        return false;
+                    }
+                    result.ThrowExceptionIfError();
+                } while (_packet->stream_index != _streamIndex);
 
-            // 校验解码结果
-            decodeResult.ThrowExceptionIfError();
+                // 取到了 stream 中的包
+                _logger.LogDebug("Find stream {index} packet. duration {duration} pts {pts}, dts {dts}, timebase {den}/{num}",
+                    _packet->stream_index, _packet->duration, _packet->pts, _packet->dts, _packet->time_base.den, _packet->time_base.num);
 
-            var pictType = _frame->pict_type;
+                // 发送包到解码器
+                ffmpeg.avcodec_send_packet(_decoderCtx, _packet)
+                    .ThrowExceptionIfError();
+            }
+            finally
+            {
+                ffmpeg.av_packet_unref(_packet);
+            }
 
-            // 非关键帧，跳过
-            if (pictType != AVPictureType.AV_PICTURE_TYPE_I)
-                continue;
+            ffmpeg.av_frame_unref(_frame);
+            decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+            // -11 资源暂不可用时候重试
+        } while (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN));
 
-            // 关键帧，退出循环
-            _logger.LogInformation("Drop non-I frame: {cnt}, decode frame type {type}.",
-                cnt, pictType.ToString());
-            break;
-        }
+        // 校验解码结果
+        decodeResult.ThrowExceptionIfError();
+
+        _logger.LogInformation("Decode video success. type {type}, duration {duration} pts {pts}, timebase {den}/{num}",
+           _frame->pict_type.ToString(), _frame->duration, _frame->pts, _frame->time_base.den, _frame->time_base.num);
 
         if (_decoderCtx->hw_device_ctx != null)
         {
@@ -349,13 +338,9 @@ public sealed class ScreenshotService
     /// <param name="targetHeight"></param>
     /// <returns></returns>
     private unsafe SwsContext* CreateSwsContext(AVCodecContext* targetCodecCtx, int targetWidth, int targetHeight)
-    {
-
-        var ctx = ffmpeg.sws_getContext(StreamWidth, StreamHeight, StreamPixelFormat,
+        => ffmpeg.sws_getContext(StreamWidth, StreamHeight, StreamPixelFormat,
             targetWidth, targetHeight, targetCodecCtx->pix_fmt,
             ffmpeg.SWS_BICUBIC, null, null, null);
-        return ctx;
-    }
 
     public async Task<(bool, byte[]?)> CapturePngImageAsync(CancellationToken cancellationToken = default)
     {
@@ -385,8 +370,6 @@ public sealed class ScreenshotService
 
                 var success = TryCaptureWebpImageUnsafe(out var image);
 
-                //success = TryCaptureWebpImageUnsafe(out image);
-
                 if (success)
                 {
                     LastCapturedImage = image;
@@ -410,7 +393,7 @@ public sealed class ScreenshotService
         var result = false;
         image = null;
 
-        if (!TryDecodeNextKeyFrame(out var frame))
+        if (!TryDecodeNextFrame(out var frame))
         {
             if (frame != null)
             {
@@ -423,39 +406,42 @@ public sealed class ScreenshotService
         CloseInput();
 
         var outFrame = frame;
-        var encoder = _webpEncoderCtx;
+        var encoderCtx = _webpEncoderCtx;
 
-        if (outFrame->format != (int)encoder->pix_fmt)
+        if (outFrame->format != (int)encoderCtx->pix_fmt)
         {
             outFrame = _webpOutputFrame;
-            var swsCtx = CreateSwsContext(encoder, StreamWidth, StreamHeight);
+            var swsCtx = CreateSwsContext(encoderCtx, StreamWidth, StreamHeight);
 
             outFrame->width = StreamWidth;
             outFrame->height = StreamHeight;
-            outFrame->format = (int)encoder->pix_fmt;
+            outFrame->format = (int)encoderCtx->pix_fmt;
 
             // 分配内存
-            ffmpeg.av_frame_get_buffer(outFrame, 32)
-                .ThrowExceptionIfError();
+            //ffmpeg.av_frame_get_buffer(outFrame, 32)
+            //    .ThrowExceptionIfError();
 
-            // 将 AVFrame 数据复制到 pngFrame
+            // 复制 AVFrame 属性数据
             ffmpeg.av_frame_copy_props(outFrame, frame);
             // 转换
-            ffmpeg.sws_scale(swsCtx, frame->data, frame->linesize, 0,
-           outFrame->height, outFrame->data, outFrame->linesize)
-               .ThrowExceptionIfError();
+            // ffmpeg.sws_scale(swsCtx, frame->data, frame->linesize, 0,
+            //outFrame->height, outFrame->data, outFrame->linesize)
+            //    .ThrowExceptionIfError();
+
+            ffmpeg.sws_scale_frame(swsCtx, outFrame, frame)
+                .ThrowExceptionIfError();
 
             ffmpeg.av_frame_unref(frame);
         }
 
         // 开始编码
-        ffmpeg.avcodec_send_frame(encoder, outFrame)
+        ffmpeg.avcodec_send_frame(encoderCtx, outFrame)
             .ThrowExceptionIfError();
 
         using var memStream = new MemoryStream();
 
         // 第一个包
-        var ret = ffmpeg.avcodec_receive_packet(encoder, _packet);
+        var ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
 
         var ct = new CancellationTokenSource(
             TimeSpan.FromMilliseconds(_streamOption.CodecTimeout));
@@ -463,7 +449,7 @@ public sealed class ScreenshotService
         while (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) && !ct.IsCancellationRequested)
         {
             _logger.LogWarning("Encode message {msg}, retry.", FFMpegExtension.av_strerror(ret));
-            ret = ffmpeg.avcodec_receive_packet(encoder, _packet);
+            ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
         }
 
         if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
@@ -481,7 +467,7 @@ public sealed class ScreenshotService
 
             while (ret != ffmpeg.AVERROR_EOF)
             {
-                ret = ffmpeg.avcodec_receive_packet(encoder, _packet);
+                ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
                 if (_packet->size != 0)
                 {
                     _logger.LogInformation("Continue received packet, save {s} to buffer.", _packet->size);
