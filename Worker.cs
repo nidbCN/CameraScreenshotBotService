@@ -43,7 +43,9 @@ public class Worker(ILogger<Worker> logger,
         }
         finally
         {
-            await botService.Bot.SendMessage(message.Build());
+            var sendTask = botService.Bot.SendMessage(message.Build());
+            var flushTask = screenshotService.FlushDecoderBufferAsync(CancellationToken.None);
+            await Task.WhenAll(sendTask, flushTask);
         }
     }
 
@@ -120,7 +122,7 @@ public class Worker(ILogger<Worker> logger,
                 throw;
             }
         };
-
+        
         botService.Invoker.OnBotOnlineEvent += (_, @event) =>
         {
             logger.LogInformation("Login Success!");
@@ -131,7 +133,8 @@ public class Worker(ILogger<Worker> logger,
             var receivedMessage = @event.Chain;
 
             logger.LogInformation("Receive group message: {json}",
-                JsonSerializer.Serialize(receivedMessage.Select(m => m.ToPreviewString())
+                JsonSerializer.Serialize(receivedMessage
+                        .Select(m => m.ToPreviewString())
                     , _jsonSerializerOptions));
 
             var textMessages = receivedMessage

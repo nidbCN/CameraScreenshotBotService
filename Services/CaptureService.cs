@@ -4,6 +4,7 @@ using FFmpeg.AutoGen;
 using CameraScreenshotBotService.Extensions;
 using CameraScreenshotBotService.Configs;
 using Microsoft.Extensions.Options;
+using System.Threading;
 
 namespace CameraScreenshotBotService.Services;
 
@@ -20,7 +21,7 @@ public sealed class CaptureService
     private readonly unsafe AVCodecContext* _decoderCtx;
     private readonly unsafe AVCodecContext* _encoderCtx;
 
-    private unsafe AVFormatContext* _inputFormatCtx = ffmpeg.avformat_alloc_context();
+    private unsafe AVFormatContext* _inputFormatCtx;
     private readonly unsafe AVDictionary* _openOptions = null;
 
     private readonly unsafe AVFrame* _frame = ffmpeg.av_frame_alloc();
@@ -183,10 +184,10 @@ public sealed class CaptureService
                     _logger.LogInformation("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_DEBUG:
-                    _logger.LogInformation("{msg}", line);
+                    _logger.LogDebug("{msg}", line);
                     break;
                 case ffmpeg.AV_LOG_TRACE:
-                    _logger.LogInformation("{msg}", line);
+                    _logger.LogTrace("{msg}", line);
                     break;
                 default:
                     _logger.LogWarning("[level {level}]{msg}", level, line);
@@ -199,6 +200,7 @@ public sealed class CaptureService
     {
         _logger.LogInformation("Open Input {url}.", _streamOption.Url.AbsoluteUri);
 
+        _inputFormatCtx = ffmpeg.avformat_alloc_context();
         var formatCtx = _inputFormatCtx;
 
         // 设置超时
@@ -215,6 +217,7 @@ public sealed class CaptureService
 
         var formatCtx = _inputFormatCtx;
         ffmpeg.avformat_close_input(&formatCtx);
+        ffmpeg.avformat_free_context(formatCtx);
     }
 
     // 会引发异常，待排查
@@ -241,47 +244,58 @@ public sealed class CaptureService
     /// <returns></returns>
     public unsafe bool TryDecodeNextFrame(out AVFrame* frame)
     {
-        int decodeResult;
+        var decodeResult = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+
         do
         {
-            // 尝试解码一个包
-            try
-            {
-                // 遍历流找到 bestStream
-                do
-                {
-                    ffmpeg.av_packet_unref(_packet);
-                    var result = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
-
-                    // 视频流已经结束
-                    if (result == ffmpeg.AVERROR_EOF)
-                    {
-                        _logger.LogError("Receive EOF in stream, return.");
-                        frame = null;
-                        return false;
-                    }
-                    result.ThrowExceptionIfError();
-                } while (_packet->stream_index != _streamIndex);
-
-                // 取到了 stream 中的包
-                _logger.LogDebug("Find stream {index} packet. duration {duration} pts {pts}, dts {dts}, timebase {den}/{num}",
-                    _packet->stream_index, _packet->duration, _packet->pts, _packet->dts, _packet->time_base.den, _packet->time_base.num);
-
-                // 发送包到解码器
-                ffmpeg.avcodec_send_packet(_decoderCtx, _packet)
-                    .ThrowExceptionIfError();
-            }
-            finally
+            // 遍历流找到 bestStream
+            do
             {
                 ffmpeg.av_packet_unref(_packet);
-            }
+                var result = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
 
-            ffmpeg.av_frame_unref(_frame);
-            decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
-            // -11 资源暂不可用时候重试
+                // 视频流已经结束
+                if (result == ffmpeg.AVERROR_EOF)
+                {
+                    _logger.LogError("Receive EOF in stream, return.");
+                    frame = null;
+                    return false;
+                }
+
+                result.ThrowExceptionIfError();
+            } while (_packet->stream_index != _streamIndex);
+
+            // 取到了 stream 中的包
+            _logger.LogDebug(
+                "Find packet of stream {index}.",
+                _packet->stream_index);
+
+            var sendResult = ffmpeg.avcodec_send_packet(_decoderCtx, _packet);
+
+            if (sendResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            {
+                // 如果前一次发送失败，尝试清除堵塞的输出缓冲区重试发送
+                while (sendResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+                {
+                    decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+                    _logger.LogWarning("Codec buffer full. Try get a decoded(MAY DROP) and send again.");
+                    sendResult = ffmpeg.avcodec_send_packet(_decoderCtx, _packet);
+                }
+            }
+            else
+            {
+                // 发送成功（心虚）
+                decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+            }
         } while (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN));
 
-        // 校验解码结果
+        ffmpeg.av_packet_unref(_packet);
+
+        if (decodeResult == ffmpeg.AVERROR_EOF)
+        {
+            _logger.LogWarning("Receive frame with EOF, maybe stream disconnected.");
+        }
+
         decodeResult.ThrowExceptionIfError();
 
         _logger.LogInformation("Decode video success. type {type}, duration {duration} pts {pts}, timebase {den}/{num}",
@@ -343,6 +357,37 @@ public sealed class CaptureService
         return ctx;
     }
     #endregion
+
+    public async Task FlushDecoderBufferAsync(CancellationToken cancellationToken)
+    {
+        await _semaphore.WaitAsync(cancellationToken);
+
+        try
+        {
+            await Task.Run(FlushDecoderBufferUnsafe, cancellationToken);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// 丢弃解码器结果中所有的帧
+    /// </summary>
+    private unsafe void FlushDecoderBufferUnsafe()
+    {
+        var cnt = 0;
+        int result;
+        do
+        {
+            result = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+            cnt++;
+        } while (result != ffmpeg.AVERROR(ffmpeg.EAGAIN));
+
+        ffmpeg.av_frame_unref(_frame);
+        _logger.LogInformation("Drop all {cnt} frames in decoder buffer.", cnt);
+    }
 
     /// <summary>
     /// 创建转换上下文

@@ -1,9 +1,7 @@
-﻿using CameraScreenshotBotService.Configs;
-using Lagrange.Core;
+﻿using Lagrange.Core;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Common.Interface;
 using Lagrange.Core.Common;
-using Microsoft.Extensions.Options;
 using Lagrange.Core.Event;
 
 namespace CameraScreenshotBotService.Services;

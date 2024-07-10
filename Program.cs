@@ -30,7 +30,6 @@ var logger = host.Services.GetRequiredService<ILogger<Program>>();
 try
 {
     var version = ffmpeg.av_version_info();
-
     logger.LogInformation("Load ffmpeg version {v}", version);
 }
 catch (NotSupportedException e)
