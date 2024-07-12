@@ -78,6 +78,7 @@ public sealed class CaptureService
                     .ThrowExceptionIfError();
 
                 codec.Value->thread_count = (int)_streamOption.CodecThreads;
+                codec.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
 
                 if (_streamOption.KeyFrameOnly)
                 {
@@ -286,13 +287,13 @@ public sealed class CaptureService
                 readResult.ThrowExceptionIfError();
             } while (_packet->stream_index != _streamIndex);
 
-            if (_packet->pts < 0)
-            {
-                _logger.LogWarning("Find packet of stream {index}, pts:{pts} < 0, drop.",
-                    _packet->stream_index,
-                    FfmpegTimeToTimeSpan(_packet->pts, _decoderCtx->time_base).ToString("c"));
-                continue;
-            }
+            //if (_packet->pts < 0)
+            //{
+            //    _logger.LogWarning("Find packet of stream {index}, pts:{pts} < 0, drop.",
+            //        _packet->stream_index,
+            //        FfmpegTimeToTimeSpan(_packet->pts, _decoderCtx->time_base).ToString("c"));
+            //    continue;
+            //}
 
             // 取到了 stream 中的包
             _logger.LogDebug(
@@ -507,8 +508,6 @@ public sealed class CaptureService
     public unsafe bool TryCaptureWebpImageUnsafe(out byte[]? image)
     {
         OpenInput();
-
-        ffmpeg.av_seek_frame(_inputFormatCtx, _streamIndex, 0, ffmpeg.AVSEEK_FLAG_ANY);
 
         var result = false;
         image = null;
