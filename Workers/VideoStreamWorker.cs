@@ -1,5 +1,4 @@
 ﻿using CameraScreenshotBotService.Extensions;
-using CameraScreenshotBotService.Services;
 using FFmpeg.AutoGen;
 
 namespace CameraScreenshotBotService.Workers;

@@ -6,7 +6,7 @@ public static class FFMpegExtension
 {
     public static unsafe string? av_strerror(int error)
     {
-        var bufferSize = 1024;
+        const int bufferSize = 1024;
         var buffer = stackalloc byte[bufferSize];
         ffmpeg.av_strerror(error, buffer, (ulong)bufferSize);
         var message = Marshal.PtrToStringAnsi((IntPtr)buffer);

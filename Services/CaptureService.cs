@@ -1,10 +1,10 @@
 ﻿
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 using CameraScreenshotBotService.Extensions;
 using CameraScreenshotBotService.Configs;
 using Microsoft.Extensions.Options;
-using System.Threading;
 
 namespace CameraScreenshotBotService.Services;
 
@@ -102,12 +102,14 @@ public sealed class CaptureService
 
         #region 初始化图片编码器
         {
+            // ReSharper disable once StringLiteralTypo
             _encoderCtx = CreateCodecCtx("libwebp",
                 config =>
             {
                 config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
                 config.Value->gop_size = 1;
                 config.Value->thread_count = (int)_streamOption.CodecThreads;
+                config.Value->time_base = new() { den = 1, num = 1000 };
                 config.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
                 config.Value->width = StreamWidth;
                 config.Value->height = StreamHeight;
@@ -237,6 +239,21 @@ public sealed class CaptureService
         ffmpeg.avcodec_close(_encoderCtx);
     }
 
+    private TimeSpan FfmpegTimeToTimeSpan(long value, AVRational timebase)
+    {
+        if (timebase.den == 0)
+        {
+
+            timebase.num = 1;
+            timebase.den = ffmpeg.AV_TIME_BASE;
+            _logger.LogWarning("Timebase den not set, reset to {num}/{den}",
+                timebase.num, timebase.den);
+        }
+
+        var milliseconds = (double)(value * timebase.num) / ((long)timebase.den * 1000);
+        return TimeSpan.FromMilliseconds(milliseconds);
+    }
+
     /// <summary>
     /// 解码下一关键帧（非线程安全）
     /// </summary>
@@ -244,62 +261,92 @@ public sealed class CaptureService
     /// <returns></returns>
     public unsafe bool TryDecodeNextFrame(out AVFrame* frame)
     {
-        var decodeResult = ffmpeg.AVERROR(ffmpeg.EAGAIN);
-
-        do
+        while (true)
         {
+            int decodeResult;
+
             // 遍历流找到 bestStream
             do
             {
                 ffmpeg.av_packet_unref(_packet);
-                var result = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
+                var readResult = ffmpeg.av_read_frame(_inputFormatCtx, _packet);
 
                 // 视频流已经结束
-                if (result == ffmpeg.AVERROR_EOF)
+                if (readResult == ffmpeg.AVERROR_EOF)
                 {
                     _logger.LogError("Receive EOF in stream, return.");
                     frame = null;
                     return false;
                 }
 
-                result.ThrowExceptionIfError();
+                readResult.ThrowExceptionIfError();
             } while (_packet->stream_index != _streamIndex);
 
             // 取到了 stream 中的包
             _logger.LogDebug(
-                "Find packet of stream {index}.",
-                _packet->stream_index);
+                "Find packet of stream {index}, pts:{pts}, dts:{dts}, {isContain} key frame",
+                _packet->stream_index,
+                FfmpegTimeToTimeSpan(_packet->pts, _decoderCtx->time_base).ToString("c"),
+                FfmpegTimeToTimeSpan(_packet->dts, _decoderCtx->time_base).ToString("c"),
+                (_packet->flags & ffmpeg.AV_PKT_FLAG_KEY) == 1 ? "contains" : "no");
 
             var sendResult = ffmpeg.avcodec_send_packet(_decoderCtx, _packet);
-
-            if (sendResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            if (sendResult == 0)
+            {
+                // 发送成功
+                _logger.LogDebug("Packet sent success, try get decoded frame.");
+                decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+            }
+            else if (sendResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
             {
                 // 如果前一次发送失败，尝试清除堵塞的输出缓冲区重试发送
                 while (sendResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
                 {
-                    decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
-                    _logger.LogWarning("Codec buffer full. Try get a decoded(MAY DROP) and send again.");
+                    FlushDecoderBufferUnsafe();
+
+                    _logger.LogWarning("Codec buffer full. Try get a decoded frame(DROP) and send again.");
                     sendResult = ffmpeg.avcodec_send_packet(_decoderCtx, _packet);
                 }
+
+                _logger.LogDebug("Packet sent success after some retry, try get decoded frame.");
+                decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
             }
             else
             {
-                // 发送成功（心虚）
-                decodeResult = ffmpeg.avcodec_receive_frame(_decoderCtx, _frame);
+                // 无法处理的发送失败
+                _logger.LogError("Packet sent failed, message: {msg}", FFMpegExtension.av_strerror(sendResult));
+                frame = null;
+                return false;
             }
-        } while (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN));
 
-        ffmpeg.av_packet_unref(_packet);
+            if (decodeResult == 0 || decodeResult == ffmpeg.AVERROR_EOF)
+            {
+                if (decodeResult == ffmpeg.AVERROR_EOF)
+                    _logger.LogWarning("Receive frame with EOF, maybe stream disconnected.");
 
-        if (decodeResult == ffmpeg.AVERROR_EOF)
-        {
-            _logger.LogWarning("Receive frame with EOF, maybe stream disconnected.");
+
+                if (_frame->pts < 0)
+                {
+                    _logger.LogInformation("Decode video success. type {type}, pts {pts} < 0, drop.",
+                        _frame->pict_type.ToString(),
+                        FfmpegTimeToTimeSpan(_frame->pts, _decoderCtx->time_base).ToString("c"));
+                    continue;
+                }
+
+                _logger.LogInformation("Decode video success. type {type}, pts {pts}.",
+                    _frame->pict_type.ToString(),
+                    FfmpegTimeToTimeSpan(_frame->pts, _decoderCtx->time_base).ToString("c"));
+
+                break;
+            }
+
+            if (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN)) continue;
+
+            frame = null;
+            return false;
         }
 
-        decodeResult.ThrowExceptionIfError();
-
-        _logger.LogInformation("Decode video success. type {type}, duration {duration} pts {pts}, timebase {den}/{num}",
-           _frame->pict_type.ToString(), _frame->duration, _frame->pts, _frame->time_base.den, _frame->time_base.num);
+        ffmpeg.av_packet_unref(_packet);
 
         if (_decoderCtx->hw_device_ctx != null)
         {
@@ -448,6 +495,8 @@ public sealed class CaptureService
     public unsafe bool TryCaptureWebpImageUnsafe(out byte[]? image)
     {
         OpenInput();
+
+        ffmpeg.av_seek_frame(_inputFormatCtx, _streamIndex, 0, ffmpeg.AVSEEK_FLAG_ANY);
 
         var result = false;
         image = null;
