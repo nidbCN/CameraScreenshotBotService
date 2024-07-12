@@ -9,4 +9,5 @@ public class StreamOption
     public uint CodecThreads { get; set; } = 4;
     public string FfmpegRoot { get; set; } = null!;
     public string? LogLevel { get; set; }
+    public bool KeyFrameOnly { get; set; } = false;
 }

@@ -78,7 +78,11 @@ public sealed class CaptureService
                     .ThrowExceptionIfError();
 
                 codec.Value->thread_count = (int)_streamOption.CodecThreads;
-                codec.Value->skip_frame = AVDiscard.AVDISCARD_NONKEY;
+
+                if (_streamOption.KeyFrameOnly)
+                {
+                    codec.Value->skip_frame = AVDiscard.AVDISCARD_NONKEY;
+                }
             });
 
             var pixFormat = _decoderCtx->pix_fmt switch
@@ -281,6 +285,14 @@ public sealed class CaptureService
 
                 readResult.ThrowExceptionIfError();
             } while (_packet->stream_index != _streamIndex);
+
+            if (_packet->pts < 0)
+            {
+                _logger.LogWarning("Find packet of stream {index}, pts:{pts} < 0, drop.",
+                    _packet->stream_index,
+                    FfmpegTimeToTimeSpan(_packet->pts, _decoderCtx->time_base).ToString("c"));
+                continue;
+            }
 
             // 取到了 stream 中的包
             _logger.LogDebug(
