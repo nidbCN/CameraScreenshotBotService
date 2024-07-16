@@ -7,6 +7,11 @@ DynamicallyLoadedBindings.Initialize();
 
 var builder = Host.CreateApplicationBuilder(args);
 
+builder.Services.AddWindowsService(s =>
+{
+    s.ServiceName = "Live stream capture bot";
+});
+
 builder.Services.Configure<StreamOption>(
     builder.Configuration.GetSection(nameof(StreamOption)));
 builder.Services.Configure<BotOption>(
@@ -30,7 +35,7 @@ var logger = host.Services.GetRequiredService<ILogger<Program>>();
 try
 {
     var version = ffmpeg.av_version_info();
-    logger.LogInformation("Load ffmpeg version {v}", version);
+    logger.LogInformation("Load ffmpeg version {v}", version ?? "unknown");
 }
 catch (NotSupportedException e)
 {

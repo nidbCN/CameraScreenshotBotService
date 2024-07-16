@@ -168,7 +168,7 @@ public sealed class CaptureService
 
         line = line.ReplaceLineEndings();
 
-        using (_logger.BeginScope(nameof(ffmpeg)))
+        using (_logger.BeginScope($"[{nameof(ffmpeg)}]"))
         {
             switch (level)
             {

@@ -5,12 +5,14 @@ using Lagrange.Core.Message.Entity;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
-using LogLevel = Lagrange.Core.Event.EventArg.LogLevel;
+using Lagrange.Core;
+using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace CameraScreenshotBotService;
 
 public class Worker(ILogger<Worker> logger,
-    CaptureService screenshotService,
+    CaptureService captureService,
     BotService botService) : BackgroundService
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions = new()
@@ -18,11 +20,11 @@ public class Worker(ILogger<Worker> logger,
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin, UnicodeRanges.CjkUnifiedIdeographs)
     };
 
-    private async Task SendCaptureMessage(MessageBuilder message)
+    private async Task SendCaptureMessage(MessageBuilder message, BotContext bot)
     {
         try
         {
-            var (result, image) = await screenshotService.CaptureImageAsync();
+            var (result, image) = await captureService.CaptureImageAsync();
 
             if (!result || image is null)
             {
@@ -43,8 +45,8 @@ public class Worker(ILogger<Worker> logger,
         }
         finally
         {
-            var sendTask = botService.Bot.SendMessage(message.Build());
-            var flushTask = screenshotService.FlushDecoderBufferAsync(CancellationToken.None);
+            var sendTask = bot.SendMessage(message.Build());
+            var flushTask = captureService.FlushDecoderBufferAsync(CancellationToken.None);
             await Task.WhenAll(sendTask, flushTask);
         }
     }
@@ -53,39 +55,29 @@ public class Worker(ILogger<Worker> logger,
     {
         await botService.LoginAsync(stoppingToken);
 
-        botService.Invoker.OnBotLogEvent += (_, @event) =>
+        botService.Invoker!.OnBotLogEvent += (_, @event) =>
         {
-            switch (@event.Level)
+            using (logger.BeginScope($"[{nameof(Lagrange.Core)}]"))
             {
-                case LogLevel.Verbose:
-                    logger.LogTrace("bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Debug:
-                    logger.LogDebug("bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Information:
-                    logger.LogInformation("bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Warning:
-                    logger.LogWarning("bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Exception:
-                    logger.LogError("bot: {msg}", @event.EventMessage);
-                    break;
-                case LogLevel.Fatal:
-                    logger.LogCritical("bot: {msg}", @event.EventMessage);
-                    break;
-                default:
-                    logger.LogWarning("bot, unknown level: {msg}", @event.EventMessage);
-                    break;
+                logger.Log(@event.Level switch
+                {
+                    BotLogLevel.Debug => LogLevel.Trace,
+                    BotLogLevel.Verbose => LogLevel.Debug,
+                    BotLogLevel.Information => LogLevel.Information,
+                    BotLogLevel.Warning => LogLevel.Warning,
+                    BotLogLevel.Exception => LogLevel.Error,
+                    BotLogLevel.Fatal => LogLevel.Critical,
+                    _ => throw new NotImplementedException(),
+                }, "[{time}]:{msg}", @event.EventTime, @event.EventMessage);
             }
         };
 
-        botService.Invoker.OnBotCaptchaEvent += (_, @event) =>
+        botService.Invoker.OnBotCaptchaEvent += (bot, @event) =>
         {
             logger.LogWarning("Need captcha, url: {msg}", @event.Url);
             logger.LogInformation("Input response json string:");
             var json = Console.ReadLine();
+
             if (json is null || string.IsNullOrWhiteSpace(json))
             {
                 logger.LogError("You input nothing! can't boot.");
@@ -94,21 +86,22 @@ public class Worker(ILogger<Worker> logger,
 
             try
             {
-                var jsonObj = JsonSerializer.Deserialize<IDictionary<string, string>>(json!);
+                var jsonObj = JsonSerializer.Deserialize<IDictionary<string, string>>(json);
 
                 if (jsonObj is null)
                 {
-                    logger.LogError("Deserialize result is null.");
+                    logger.LogError("Deserialize `{json}` failed, result is null.", json);
                 }
                 else
                 {
-                    const string TICKET = "ticket";
-                    const string RAND_STR = "randstr";
+                    const string ticket = "ticket";
+                    const string randStr = "randstr";
 
-                    if (jsonObj.TryGetValue(TICKET, out var ticket) && jsonObj.TryGetValue(RAND_STR, out var randstr))
+                    if (jsonObj.TryGetValue(ticket, out var ticketValue)
+                        && jsonObj.TryGetValue(randStr, out var randStrValue))
                     {
-                        logger.LogInformation("Recv captcha, ticket {t}, randstr {s}", ticket, randstr);
-                        botService.Bot.SubmitCaptcha(ticket, randstr);
+                        logger.LogInformation("Receive captcha, ticket {t}, rand-str {s}", ticketValue, randStrValue);
+                        bot.SubmitCaptcha(ticketValue, randStrValue);
                     }
                     else
                     {
@@ -122,53 +115,55 @@ public class Worker(ILogger<Worker> logger,
                 throw;
             }
         };
-        
-        botService.Invoker.OnBotOnlineEvent += (_, @event) =>
+
+        botService.Invoker.OnBotOnlineEvent += (_, _) =>
         {
             logger.LogInformation("Login Success!");
         };
 
-        botService.Invoker.OnGroupMessageReceived += async (t, @event) =>
+        botService.Invoker.OnGroupMessageReceived += async (bot, @event) =>
         {
             var receivedMessage = @event.Chain;
 
             logger.LogInformation("Receive group message: {json}",
-                JsonSerializer.Serialize(receivedMessage
-                        .Select(m => m.ToPreviewString())
+                JsonSerializer.Serialize(
+                    receivedMessage.Select(
+                        m => m.ToPreviewString())
                     , _jsonSerializerOptions));
 
             var textMessages = receivedMessage
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text.StartsWith("让我看看") ?? false))
-            {
-                var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
+            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
+                return;
 
-                await SendCaptureMessage(sendMessage);
-            }
+            var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
+            await SendCaptureMessage(sendMessage, bot);
         };
 
-        botService.Invoker.OnFriendMessageReceived += async (_, @event) =>
+        botService.Invoker.OnFriendMessageReceived += async (bot, @event) =>
         {
             var receivedMessage = @event.Chain;
 
-            logger.LogInformation("Receive group message: {json}",
-                JsonSerializer.Serialize(receivedMessage.Select(m => m.ToPreviewString())
+            logger.LogInformation("Receive friend message: {json}",
+                JsonSerializer.Serialize(
+                    receivedMessage.Select(
+                        m => m.ToPreviewString())
                     , _jsonSerializerOptions));
 
             var textMessages = receivedMessage
                 .Select(m => m as TextEntity)
                 .Where(m => m != null);
 
-            if (textMessages.Any(m => m?.Text.StartsWith("让我看看") ?? false))
-            {
-                var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
-                await SendCaptureMessage(sendMessage);
-            }
+            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
+                return;
+
+            var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
+            await SendCaptureMessage(sendMessage, bot);
         };
 
-        await Task.Delay(200, stoppingToken);
+        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
     }
 }
 
