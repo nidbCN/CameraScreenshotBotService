@@ -1,31 +1,32 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Worker">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UserSecretsId>dotnet-CameraScreenshotBotService-cb025c89-792b-4dc9-b906-741e8edcffc7</UserSecretsId>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-    <DockerfileContext>.</DockerfileContext>
-    <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
-    <AssemblyVersion>8.1.0.3</AssemblyVersion>
-    <FileVersion>8.1.0.3</FileVersion>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UserSecretsId>dotnet-CameraScreenshotBotService-cb025c89-792b-4dc9-b906-741e8edcffc7</UserSecretsId>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+		<DockerfileContext>.</DockerfileContext>
+		<ProduceReferenceAssembly>False</ProduceReferenceAssembly>
+		<AssemblyVersion>8.1.0.3</AssemblyVersion>
+		<FileVersion>8.1.0.3</FileVersion>
+		<RootNamespace>App.WindowsService</RootNamespace>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <Compile Remove="SignProviders\**" />
-    <Content Remove="SignProviders\**" />
-    <EmbeddedResource Remove="SignProviders\**" />
-    <None Remove="SignProviders\**" />
-  </ItemGroup>
+	<ItemGroup>
+		<Compile Remove="SignProviders\**" />
+		<Content Remove="SignProviders\**" />
+		<EmbeddedResource Remove="SignProviders\**" />
+		<None Remove="SignProviders\**" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="FFmpeg.AutoGen" Version="6.1.0" />
-    <PackageReference Include="FFmpeg.AutoGen.Bindings.DynamicallyLoaded" Version="6.1.0" />
-    <PackageReference Include="Lagrange.Core" Version="0.2.2" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.5" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="FFmpeg.AutoGen" Version="6.1.0" />
+		<PackageReference Include="FFmpeg.AutoGen.Bindings.DynamicallyLoaded" Version="6.1.0" />
+		<PackageReference Include="Lagrange.Core" Version="0.2.2" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
+		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.5" />
+	</ItemGroup>
 </Project>

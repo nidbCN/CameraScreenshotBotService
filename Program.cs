@@ -31,6 +31,16 @@ builder.Services.AddHostedService<Worker>();
 var host = builder.Build();
 
 var logger = host.Services.GetRequiredService<ILogger<Program>>();
+var env = host.Services.GetRequiredService<IHostEnvironment>();
+
+// set current directory
+logger.LogDebug("Content Root: {r}, current {c}, base {b}",
+    builder.Environment.ContentRootPath,
+    Directory.GetCurrentDirectory(),
+    AppContext.BaseDirectory
+);
+Directory.SetCurrentDirectory(env.ContentRootPath);
+
 // test ffmpeg load
 try
 {
