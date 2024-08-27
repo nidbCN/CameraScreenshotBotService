@@ -11,7 +11,7 @@ public unsafe struct AVCodecContextWrapper(AVCodecContext* ctx)
     public AVCodecContext* Value { get; } = ctx;
 }
 
-public sealed class CaptureService
+public sealed class CaptureService : IDisposable
 {
     private readonly ILogger<CaptureService> _logger;
     private readonly StreamOption _streamOption;
@@ -221,15 +221,12 @@ public sealed class CaptureService
     // 会引发异常，待排查
     public unsafe void Dispose()
     {
-        var formatCtx = _inputFormatCtx;
-        ffmpeg.avformat_free_context(formatCtx);
-
         var pFrame = _frame;
         ffmpeg.av_frame_free(&pFrame);
-        var pPacket = _packet;
-        ffmpeg.av_packet_free(&pPacket);
         var pWebpOutputFrame = _webpOutputFrame;
         ffmpeg.av_frame_free(&pWebpOutputFrame);
+        var pPacket = _packet;
+        ffmpeg.av_packet_free(&pPacket);
 
         ffmpeg.avcodec_close(_decoderCtx);
         ffmpeg.avcodec_close(_encoderCtx);
@@ -239,7 +236,6 @@ public sealed class CaptureService
     {
         if (timebase.den == 0)
         {
-
             timebase.num = 1;
             timebase.den = ffmpeg.AV_TIME_BASE;
             _logger.LogWarning("Timebase den not set, reset to {num}/{den}",
@@ -374,10 +370,10 @@ public sealed class CaptureService
     /// <summary>
     /// 创建编解码器
     /// </summary>
-    /// <param name="codecId"></param>
-    /// <param name="config">是否有效未知</param>
-    /// <param name="pixelFormat"></param>
-    /// <returns></returns>
+    /// <param name="codecId">编解码器ID</param>
+    /// <param name="config">配置</param>
+    /// <param name="pixelFormat">像素格式</param>
+    /// <returns>编解码器上下文</returns>
     private unsafe AVCodecContext* CreateCodecCtx(AVCodecID codecId, Action<AVCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
     {
         var codec = ffmpeg.avcodec_find_encoder(codecId);
@@ -416,6 +412,11 @@ public sealed class CaptureService
     }
     #endregion
 
+    /// <summary>
+    /// 丢弃解码器结果中所有的帧（异步）
+    /// </summary>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     public async Task FlushDecoderBufferAsync(CancellationToken cancellationToken)
     {
         await _semaphore.WaitAsync(cancellationToken);
@@ -460,6 +461,11 @@ public sealed class CaptureService
             targetWidth, targetHeight, targetCodecCtx->pix_fmt,
             ffmpeg.SWS_BICUBIC, null, null, null);
 
+    /// <summary>
+    /// 截取图片（异步）
+    /// </summary>
+    /// <param name="cancellationToken"></param>
+    /// <returns>是否成功，图片字节码</returns>
     public async Task<(bool, byte[]?)> CaptureImageAsync(CancellationToken cancellationToken = default)
     {
         await _semaphore.WaitAsync(cancellationToken);
@@ -467,7 +473,7 @@ public sealed class CaptureService
         try
         {
             var captureTimeSpan = DateTime.Now - LastCaptureTime;
-            if (LastCapturedImage != null && captureTimeSpan <= TimeSpan.FromSeconds(20))
+            if (LastCapturedImage != null && captureTimeSpan <= TimeSpan.FromSeconds(5))
             {
                 _logger.LogInformation("Return image cached {time} ago.", captureTimeSpan);
                 return (true, LastCapturedImage);
@@ -485,10 +491,9 @@ public sealed class CaptureService
             _logger.LogInformation("Cache image expired, capture new.");
             try
             {
-
                 var success = TryCaptureWebpImageUnsafe(out var image);
 
-                if (!success) return (success, image);
+                if (!success) return (success, null);
 
                 LastCapturedImage = image;
                 LastCaptureTime = DateTime.Now;
@@ -548,43 +553,45 @@ public sealed class CaptureService
             ffmpeg.sws_scale_frame(swsCtx, outFrame, frame)
                 .ThrowExceptionIfError();
 
-            ffmpeg.av_frame_unref(frame);
+            // ffmpeg.av_frame_unref(frame);
         }
 
         // 开始编码
+        _logger.LogDebug("Send frame {num} to encoder.", encoderCtx->frame_num);
         ffmpeg.avcodec_send_frame(encoderCtx, outFrame)
             .ThrowExceptionIfError();
 
         using var memStream = new MemoryStream();
 
-        // 第一个包
-        var ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
-
         var ct = new CancellationTokenSource(
             TimeSpan.FromMilliseconds(_streamOption.CodecTimeout));
 
-        while (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) && !ct.IsCancellationRequested)
-        {
-            _logger.LogWarning("Encode message {msg}, retry.", FFMpegExtension.av_strerror(ret));
-            ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
-        }
+        int encodeResult;
 
-        if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+        do
         {
-            // 依旧不可用
-            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(ret));
+            // 尝试接收包
+            _logger.LogDebug("Receive packet from encoder.");
+            encodeResult = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
+        } while (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN)
+                 && !ct.IsCancellationRequested);
+
+        if (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+        {
+            // 超时并且依旧不可用
+            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(encodeResult));
             result = false;
         }
-        else if (ret >= 0)
+        else if (encodeResult >= 0)
         {
             //正常接收到数据
             _logger.LogInformation("Save packet with size {s} to buffer.", _packet->size);
             WriteToStream(memStream, _packet);
             result = true;
 
-            while (ret != ffmpeg.AVERROR_EOF)
+            while (encodeResult != ffmpeg.AVERROR_EOF)
             {
-                ret = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
+                encodeResult = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
                 if (_packet->size != 0)
                 {
                     _logger.LogInformation("Continue received packet, save {s} to buffer.", _packet->size);
@@ -597,7 +604,7 @@ public sealed class CaptureService
                 }
             }
         }
-        else if (ret == ffmpeg.AVERROR_EOF)
+        else if (encodeResult == ffmpeg.AVERROR_EOF)
         {
             if (_packet->size != 0)
             {
