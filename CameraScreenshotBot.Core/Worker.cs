@@ -8,6 +8,7 @@ using Lagrange.Core;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
@@ -20,12 +21,7 @@ public class Worker(ILogger<Worker> logger,
     IsolatedStorageFile isoStorage,
     IOptions<BotOption> botOptions) : BackgroundService
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions = new()
-    {
-        Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin, UnicodeRanges.CjkUnifiedIdeographs)
-    };
-
-    private async Task SendCaptureMessage(MessageBuilder message, BotContext bot)
+    private async Task SendCaptureMessage(MessageBuilder message, BotContext thisBot)
     {
         try
         {
@@ -46,17 +42,16 @@ public class Worker(ILogger<Worker> logger,
         catch (Exception e)
         {
             logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
-            message.Text("杰哥不要！（图像编码器崩溃）");
+            message.Text("杰哥不要！（图像编解码器崩溃）");
         }
         finally
         {
-            var sendTask = bot.SendMessage(message.Build());
+            var sendTask = thisBot.SendMessage(message.Build());
             var flushTask = captureService.FlushDecoderBufferAsync(CancellationToken.None);
             await Task.WhenAll(sendTask, flushTask);
         }
     }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    private async Task LoginAsync(CancellationToken stoppingToken)
     {
         var loggedIn = await botCtx.LoginByPassword(stoppingToken);
         if (!loggedIn)
@@ -66,8 +61,9 @@ public class Worker(ILogger<Worker> logger,
             var (url, _) = await botCtx.FetchQrCode()
                            ?? throw new ApplicationException(message: "Fetch QRCode failed.");
 
-            var loginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            
+            // The QrCode will be expired in 2 minutes.
+            var loginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
             var link = new UriBuilder("https://util-functions.azurewebsites.net/api/QrCode")
             {
                 Query = await new FormUrlEncodedContent(
@@ -83,15 +79,37 @@ public class Worker(ILogger<Worker> logger,
                 .CreateLinkedTokenSource(stoppingToken, loginTimeoutTokenSrc.Token);
 
             await botCtx.LoginByQrCode(loginStoppingTokenSrc.Token);
-
-            // save device info and keystore
-            await using var deviceInfoFileStream =  isoStorage.OpenFile(botOptions.Value.DeviceInfoFile, FileMode.OpenOrCreate, FileAccess.Write);
-            await JsonSerializer.SerializeAsync(deviceInfoFileStream, botCtx.UpdateDeviceInfo(), cancellationToken: stoppingToken);
-
-            await using var keyFileStream = isoStorage.OpenFile(botOptions.Value.KeyStoreFile, FileMode.OpenOrCreate, FileAccess.Write);
-            await JsonSerializer.SerializeAsync(keyFileStream, botCtx.UpdateKeystore(), cancellationToken: stoppingToken);
         }
 
+        // save device info and keystore
+        await using var deviceInfoFileStream = isoStorage.OpenFile(botOptions.Value.DeviceInfoFile, FileMode.OpenOrCreate, FileAccess.Write);
+        await JsonSerializer.SerializeAsync(deviceInfoFileStream, botCtx.UpdateDeviceInfo(), cancellationToken: stoppingToken);
+
+        await using var keyFileStream = isoStorage.OpenFile(botOptions.Value.KeyStoreFile, FileMode.OpenOrCreate, FileAccess.Write);
+        await JsonSerializer.SerializeAsync(keyFileStream, botCtx.UpdateKeystore(), cancellationToken: stoppingToken);
+    }
+
+    private async Task ProcessMessage(MessageChain recMessage, BotContext thisBot, MessageBuilder sendMessage)
+    {
+        using (logger.BeginScope(recMessage.GroupUin is null
+                   ? "Friend" + recMessage.FriendUin
+                   : "Group" + recMessage.GroupUin))
+        {
+            logger.LogInformation("Received: {msg}", recMessage.ToPreviewText());
+
+            var textMessages = recMessage
+                .Select(m => m as TextEntity)
+                .Where(m => m != null);
+
+            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
+                return;
+
+            await SendCaptureMessage(sendMessage, thisBot);
+        }
+    }
+
+    private void ConfigureEvents()
+    {
         botCtx.Invoker.OnBotLogEvent += (_, @event) =>
         {
             using (logger.BeginScope($"[{nameof(Lagrange.Core)}]"))
@@ -155,50 +173,23 @@ public class Worker(ILogger<Worker> logger,
 
         botCtx.Invoker.OnBotOnlineEvent += (_, _) =>
         {
-            logger.LogInformation("Login Success!");
+            logger.LogInformation("Login Success! Bot online.");
         };
 
         botCtx.Invoker.OnGroupMessageReceived += async (bot, @event) =>
         {
-            var receivedMessage = @event.Chain;
-
-            logger.LogInformation("Receive group message: {json}",
-                JsonSerializer.Serialize(
-                    receivedMessage.Select(
-                        m => m.ToPreviewString())
-                    , _jsonSerializerOptions));
-
-            var textMessages = receivedMessage
-                .Select(m => m as TextEntity)
-                .Where(m => m != null);
-
-            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
-                return;
-
-            var sendMessage = MessageBuilder.Group(@event.Chain.GroupUin ?? 0);
-            await SendCaptureMessage(sendMessage, bot);
+            await ProcessMessage(@event.Chain, bot, MessageBuilder.Group(@event.Chain.GroupUin!.Value));
         };
 
         botCtx.Invoker.OnFriendMessageReceived += async (bot, @event) =>
         {
-            var receivedMessage = @event.Chain;
-
-            logger.LogInformation("Receive friend message: {json}",
-                JsonSerializer.Serialize(
-                    receivedMessage.Select(
-                        m => m.ToPreviewString())
-                    , _jsonSerializerOptions));
-
-            var textMessages = receivedMessage
-                .Select(m => m as TextEntity)
-                .Where(m => m != null);
-
-            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
-                return;
-
-            var sendMessage = MessageBuilder.Friend(@event.Chain.FriendUin);
-            await SendCaptureMessage(sendMessage, bot);
+            await ProcessMessage(@event.Chain, bot, MessageBuilder.Friend(@event.Chain.FriendUin));
         };
+    }
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await LoginAsync(stoppingToken);
+        ConfigureEvents();
 
         while (!stoppingToken.IsCancellationRequested)
         {
