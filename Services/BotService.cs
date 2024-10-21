@@ -1,14 +1,13 @@
 ﻿using Lagrange.Core;
-using Lagrange.Core.Common.Interface.Api;
-using Lagrange.Core.Common.Interface;
 using Lagrange.Core.Common;
+using Lagrange.Core.Common.Interface;
+using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Event;
 
-namespace CameraScreenshotBotService.Services;
-
+namespace CameraScreenshotBot.Core.Services;
 public class BotService(
     ILogger<BotService> logger,
-    StorageService storageService)
+    IsoStoreService isoStoreService)
     : IDisposable
 {
     public BotContext? Bot { get; private set; }
@@ -17,10 +16,17 @@ public class BotService(
 
     public async Task LoginAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Start login.");
+        var botConfig = new BotConfig
+        {
+            GetOptimumServer = true,
+            UseIPv6Network = false,
+            Protocol = Protocols.Linux,
+        };
 
-        var keyStore = storageService.LoadKeyStore();
-        var deviceInfo = storageService.LoadDeviceInfo();
+        logger.LogDebug("Start login.");
+
+        var keyStore = isoStoreService.LoadKeyStore();
+        var deviceInfo = isoStoreService.LoadDeviceInfo();
 
         if (keyStore is null || deviceInfo is null)
         {
@@ -29,52 +35,52 @@ public class BotService(
             keyStore = new();
 
             // 首次登陆
-            Bot = BotFactory.Create(new()
-            {
-                GetOptimumServer = true,
-                UseIPv6Network = false,
-                Protocol = Protocols.Linux,
-            }, deviceInfo, keyStore);
+            Bot = BotFactory.Create(botConfig, deviceInfo, keyStore);
 
-            var (_, codeImg) = await Bot.FetchQrCode()
+            var (url, _) = await Bot.FetchQrCode()
                                ?? throw new ApplicationException(message: "Fetch QRCode failed.");
 
-            var codeImgFile = new FileInfo("./Images/qrcode.png");
-            await using var stream = codeImgFile.OpenWrite();
-            await stream.WriteAsync(codeImg, cancellationToken);
-            stream.Close();
+            var link = new UriBuilder("https://util-functions.azurewebsites.net/api/QrCode")
+            {
+                Query = await new FormUrlEncodedContent(
+                    new Dictionary<string, string> {
+                        {"content", url}
+                    }).ReadAsStringAsync(cancellationToken)
+            };
 
-            logger.LogInformation("Scan QRCode to login. QRCode image has been saved to {path}.", codeImgFile.FullName);
+            logger.LogInformation("Open link '{url}' and scan the QRCode to login.", link);
 
-            await Bot.LoginByQrCode();
-            codeImgFile.Delete();
+            //var codeImgFile = new FileInfo("./Images/qrcode.png");
+            //await using var stream = codeImgFile.OpenWrite();
+            //await stream.WriteAsync(codeImg, cancellationToken);
+            //stream.Close();
 
-            storageService.SaveKeyStore(Bot.UpdateKeystore());
-            storageService.SaveDeviceInfo(deviceInfo);
+            //logger.LogInformation("Scan QRCode to login. QRCode image has been saved to {path}.", codeImgFile.FullName);
+
+            await Bot.LoginByQrCode().WaitAsync(cancellationToken);
+            //codeImgFile.Delete();
+
+            isoStoreService.SaveKeyStore(Bot.UpdateKeystore());
+            isoStoreService.SaveDeviceInfo(deviceInfo);
         }
         else
         {
-            Bot = BotFactory.Create(new()
-            {
-                GetOptimumServer = true,
-                UseIPv6Network = false,
-                Protocol = Protocols.Linux,
-            }, deviceInfo, keyStore);
+            Bot = BotFactory.Create(botConfig, deviceInfo, keyStore);
 
-            var loggedIn = await Bot.LoginByPassword();
-
-            if (!loggedIn)
+            if (!await Bot.LoginByPassword())
             {
                 logger.LogError("Login failed!");
             }
         }
 
-        storageService.SaveKeyStore(Bot.UpdateKeystore());
+        isoStoreService.SaveKeyStore(Bot.UpdateKeystore());
     }
 
     public void Dispose()
     {
-        Bot.Dispose();
+        Bot?.Dispose();
         GC.SuppressFinalize(this);
     }
+
+
 }

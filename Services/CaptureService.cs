@@ -22,9 +22,9 @@ public sealed class CaptureService : IDisposable
     private unsafe AVFormatContext* _inputFormatCtx;
     private readonly unsafe AVDictionary* _openOptions = null;
 
-    private readonly unsafe AVFrame* _frame = ffmpeg.av_frame_alloc();
-    private readonly unsafe AVFrame* _webpOutputFrame = ffmpeg.av_frame_alloc();
-    private readonly unsafe AVPacket* _packet = ffmpeg.av_packet_alloc();
+    private readonly unsafe AVFrame* _frame ;/*= /*ffmpeg.av_frame_alloc();*/
+    private readonly unsafe AVFrame* _webpOutputFrame;/* = /*ffmpeg.av_frame_alloc();*/
+    private readonly unsafe AVPacket* _packet;/* = /*ffmpeg.av_packet_alloc();*/
 
     private av_log_set_callback_callback _logCallback;
 
@@ -40,102 +40,107 @@ public sealed class CaptureService : IDisposable
     public int StreamHeight { get; }
     public int StreamWidth { get; }
 
-    public unsafe CaptureService(ILogger<CaptureService> logger, IOptions<StreamOption> option)
+    public CaptureService()
     {
-        _logger = logger;
-        _logCallback = FfmpegLogInvoke;
-        _streamOption = option.Value;
-
-        if (_streamOption.Url is null)
-            throw new ArgumentNullException(nameof(option), "StreamOption.Url can not be null.");
-
-        _codecCancellationToken = new(TimeSpan.FromMilliseconds(
-            _streamOption.CodecTimeout));
-
-        // 设置超时
-        var openOptions = _openOptions;
-        ffmpeg.av_dict_set(&openOptions, "timeout", _streamOption.ConnectTimeout.ToString(), 0);
-
-        #region 初始化视频流解码器
-        OpenInput();
-
-        ffmpeg.avformat_find_stream_info(_inputFormatCtx, null)
-            .ThrowExceptionIfError();
-
-        // 匹配解码器信息
-        AVCodec* decoder = null;
-        _streamIndex = ffmpeg
-            .av_find_best_stream(_inputFormatCtx, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0)
-            .ThrowExceptionIfError();
-
-        // 创建解码器
-        _decoderCtx = CreateCodecCtx(decoder, codec =>
-        {
-            ffmpeg.avcodec_parameters_to_context(codec.Value, _inputFormatCtx->streams[_streamIndex]->codecpar)
-                .ThrowExceptionIfError();
-
-            codec.Value->thread_count = (int)_streamOption.CodecThreads;
-            codec.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
-
-            if (_streamOption.KeyFrameOnly)
-            {
-                codec.Value->skip_frame = AVDiscard.AVDISCARD_NONKEY;
-            }
-        });
-
-        var pixFormat = _decoderCtx->pix_fmt switch
-        {
-            AVPixelFormat.AV_PIX_FMT_YUVJ420P => AVPixelFormat.AV_PIX_FMT_YUV420P,
-            AVPixelFormat.AV_PIX_FMT_YUVJ422P => AVPixelFormat.AV_PIX_FMT_YUV422P,
-            AVPixelFormat.AV_PIX_FMT_YUVJ444P => AVPixelFormat.AV_PIX_FMT_YUV444P,
-            AVPixelFormat.AV_PIX_FMT_YUVJ440P => AVPixelFormat.AV_PIX_FMT_YUV440P,
-            _ => _decoderCtx->pix_fmt,
-        };
-
-        // 设置输入流信息
-        StreamDecoderName = ffmpeg.avcodec_get_name(decoder->id);
-        StreamPixelFormat = pixFormat;
-        StreamWidth = _decoderCtx->width;
-        StreamHeight = _decoderCtx->height;
-
-        CloseInput();
-        #endregion
-
-        #region 初始化图片编码器
-        _encoderCtx = CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
-            {
-                config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
-                config.Value->gop_size = 1;
-                config.Value->thread_count = (int)_streamOption.CodecThreads;
-                config.Value->time_base = new() { den = 1, num = 1000 };
-                config.Value->flags |= ffmpeg.AV_CODEC_FLAG_COPY_OPAQUE;
-                config.Value->width = StreamWidth;
-                config.Value->height = StreamHeight;
-
-                ffmpeg.av_opt_set(config.Value->priv_data, "preset", "photo", ffmpeg.AV_OPT_SEARCH_CHILDREN)
-                    .ThrowExceptionIfError();
-            });
-        #endregion
-
-        // 设置日志
-        if (option.Value.LogLevel is null) return;
-
-        var level = option.Value.LogLevel.ToUpper() switch
-        {
-            "TRACE" => ffmpeg.AV_LOG_TRACE,
-            "VERBOSE" => ffmpeg.AV_LOG_VERBOSE,
-            "DEBUG" => ffmpeg.AV_LOG_DEBUG,
-            "INFO" => ffmpeg.AV_LOG_INFO,
-            "WARNING" => ffmpeg.AV_LOG_WARNING,
-            "ERROR" => ffmpeg.AV_LOG_ERROR,
-            "FATAL" => ffmpeg.AV_LOG_FATAL,
-            "PANIC" => ffmpeg.AV_LOG_PANIC,
-            _ => ffmpeg.AV_LOG_INFO,
-        };
-
-        ffmpeg.av_log_set_level(level);
-        ffmpeg.av_log_set_callback(_logCallback);
+        
     }
+
+    //public unsafe CaptureService(ILogger<CaptureService> logger, IOptions<StreamOption> option)
+    //{
+    //    _logger = logger;
+    //    _logCallback = FfmpegLogInvoke;
+    //    _streamOption = option.Value;
+
+    //    if (_streamOption.Url is null)
+    //        throw new ArgumentNullException(nameof(option), "StreamOption.Url can not be null.");
+
+    //    _codecCancellationToken = new(TimeSpan.FromMilliseconds(
+    //        _streamOption.CodecTimeout));
+
+    //    // 设置超时
+    //    var openOptions = _openOptions;
+    //    ffmpeg.av_dict_set(&openOptions, "timeout", _streamOption.ConnectTimeout.ToString(), 0);
+
+    //    #region 初始化视频流解码器
+    //    OpenInput();
+
+    //    ffmpeg.avformat_find_stream_info(_inputFormatCtx, null)
+    //        .ThrowExceptionIfError();
+
+    //    // 匹配解码器信息
+    //    AVCodec* decoder = null;
+    //    _streamIndex = ffmpeg
+    //        .av_find_best_stream(_inputFormatCtx, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0)
+    //        .ThrowExceptionIfError();
+
+    //    // 创建解码器
+    //    _decoderCtx = CreateCodecCtx(decoder, codec =>
+    //    {
+    //        ffmpeg.avcodec_parameters_to_context(codec.Value, _inputFormatCtx->streams[_streamIndex]->codecpar)
+    //            .ThrowExceptionIfError();
+
+    //        codec.Value->thread_count = (int)_streamOption.CodecThreads;
+    //        codec.Value->flags |= ffmpeg.AV_CODEC_FLAG_LOW_DELAY;
+
+    //        if (_streamOption.KeyFrameOnly)
+    //        {
+    //            codec.Value->skip_frame = AVDiscard.AVDISCARD_NONKEY;
+    //        }
+    //    });
+
+    //    var pixFormat = _decoderCtx->pix_fmt switch
+    //    {
+    //        AVPixelFormat.AV_PIX_FMT_YUVJ420P => AVPixelFormat.AV_PIX_FMT_YUV420P,
+    //        AVPixelFormat.AV_PIX_FMT_YUVJ422P => AVPixelFormat.AV_PIX_FMT_YUV422P,
+    //        AVPixelFormat.AV_PIX_FMT_YUVJ444P => AVPixelFormat.AV_PIX_FMT_YUV444P,
+    //        AVPixelFormat.AV_PIX_FMT_YUVJ440P => AVPixelFormat.AV_PIX_FMT_YUV440P,
+    //        _ => _decoderCtx->pix_fmt,
+    //    };
+
+    //    // 设置输入流信息
+    //    StreamDecoderName = ffmpeg.avcodec_get_name(decoder->id);
+    //    StreamPixelFormat = pixFormat;
+    //    StreamWidth = _decoderCtx->width;
+    //    StreamHeight = _decoderCtx->height;
+
+    //    CloseInput();
+    //    #endregion
+
+    //    #region 初始化图片编码器
+    //    _encoderCtx = CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
+    //        {
+    //            config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+    //            config.Value->gop_size = 1;
+    //            config.Value->thread_count = (int)_streamOption.CodecThreads;
+    //            config.Value->time_base = new() { den = 1, num = 1000 };
+    //            config.Value->flags |= ffmpeg.AV_CODEC_FLAG_COPY_OPAQUE;
+    //            config.Value->width = StreamWidth;
+    //            config.Value->height = StreamHeight;
+
+    //            ffmpeg.av_opt_set(config.Value->priv_data, "preset", "photo", ffmpeg.AV_OPT_SEARCH_CHILDREN)
+    //                .ThrowExceptionIfError();
+    //        });
+    //    #endregion
+
+    //    // 设置日志
+    ////    if (option.Value.LogLevel is null) return;
+
+    ////    var level = option.Value.LogLevel.ToUpper() switch
+    ////    {
+    ////        "TRACE" => ffmpeg.AV_LOG_TRACE,
+    ////        "VERBOSE" => ffmpeg.AV_LOG_VERBOSE,
+    ////        "DEBUG" => ffmpeg.AV_LOG_DEBUG,
+    ////        "INFO" => ffmpeg.AV_LOG_INFO,
+    ////        "WARNING" => ffmpeg.AV_LOG_WARNING,
+    ////        "ERROR" => ffmpeg.AV_LOG_ERROR,
+    ////        "FATAL" => ffmpeg.AV_LOG_FATAL,
+    ////        "PANIC" => ffmpeg.AV_LOG_PANIC,
+    ////        _ => ffmpeg.AV_LOG_INFO,
+    ////    };
+
+    ////    ffmpeg.av_log_set_level(level);
+    ////    ffmpeg.av_log_set_callback(_logCallback);
+    ////}
 
     /// <summary>
     /// ffmpeg 日志回调
@@ -506,6 +511,108 @@ public sealed class CaptureService : IDisposable
             }
         }, cancellationToken);
         return result;
+    }
+
+    public unsafe bool TryEncodeWebpUnsafe(AVFrame* frame, out byte[]? image)
+    {
+        var outputFrame = frame;
+        var encoderCtx = _encoderCtx;
+
+        if (outputFrame->format != (int)encoderCtx->pix_fmt)
+        {
+            outputFrame = _webpOutputFrame;
+            var swsCtx = CreateSwsContext(encoderCtx, StreamWidth, StreamHeight);
+
+            outputFrame->width = StreamWidth;
+            outputFrame->height = StreamHeight;
+            outputFrame->format = (int)encoderCtx->pix_fmt;
+
+            // 分配内存
+            //ffmpeg.av_frame_get_buffer(outFrame, 32)
+            //    .ThrowExceptionIfError();
+
+            // 复制 AVFrame 属性数据
+            ffmpeg.av_frame_copy_props(outputFrame, frame);
+            // 转换
+            // ffmpeg.sws_scale(swsCtx, frame->data, frame->linesize, 0,
+            //outFrame->height, outFrame->data, outFrame->linesize)
+            //    .ThrowExceptionIfError();
+
+            ffmpeg.sws_scale_frame(swsCtx, outputFrame, frame)
+                .ThrowExceptionIfError();
+
+            // ffmpeg.av_frame_unref(frame);
+        }
+
+        // 开始编码
+        _logger.LogDebug("Send frame {num} to encoder.", encoderCtx->frame_num);
+        ffmpeg.avcodec_send_frame(encoderCtx, outputFrame)
+            .ThrowExceptionIfError();
+
+        using var memStream = new MemoryStream();
+
+        var ct = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(_streamOption.CodecTimeout));
+
+        int encodeResult;
+
+        do
+        {
+            // 尝试接收包
+            _logger.LogDebug("Receive packet from encoder.");
+            encodeResult = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
+        } while (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN)
+                 && !ct.IsCancellationRequested);
+
+        if (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+        {
+            // 超时并且依旧不可用
+            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(encodeResult));
+            //result = false;
+        }
+        else if (encodeResult >= 0)
+        {
+            //正常接收到数据
+            _logger.LogInformation("Save packet with size {s} to buffer.", _packet->size);
+            WriteToStream(memStream, _packet);
+          //  result = true;
+
+            while (encodeResult != ffmpeg.AVERROR_EOF)
+            {
+                encodeResult = ffmpeg.avcodec_receive_packet(encoderCtx, _packet);
+                if (_packet->size != 0)
+                {
+                    _logger.LogInformation("Continue received packet, save {s} to buffer.", _packet->size);
+                    WriteToStream(memStream, _packet);
+                }
+                else
+                {
+                    _logger.LogInformation("Received empty packet, no data to save.");
+                    break;
+                }
+            }
+        }
+        else if (encodeResult == ffmpeg.AVERROR_EOF)
+        {
+            if (_packet->size != 0)
+            {
+                _logger.LogInformation("Received EOF, save {s} to buffer.", _packet->size);
+                WriteToStream(memStream, _packet);
+            }
+            else
+            {
+                _logger.LogInformation("Received EOF, no data to save.");
+            }
+        }
+
+        // 释放资源
+        ffmpeg.av_packet_unref(_packet);
+        ffmpeg.av_frame_unref(outputFrame);
+
+        image = memStream.ToArray();
+        memStream.Close();
+
+        return false;
     }
 
     public unsafe bool TryCaptureWebpImageUnsafe(out byte[]? image)

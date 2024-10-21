@@ -163,7 +163,9 @@ public class Worker(ILogger<Worker> logger,
             await SendCaptureMessage(sendMessage, bot);
         };
 
-        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+        }
     }
 }
-

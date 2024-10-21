@@ -23,9 +23,10 @@ var streamConfig = builder.Configuration.GetSection(nameof(StreamOption))
 ffmpeg.RootPath =
     streamConfig?.FfmpegRoot;
 
-builder.Services.AddSingleton<StorageService>();
+builder.Services.AddSingleton<IsoStoreService>();
 builder.Services.AddSingleton<CaptureService>();
 builder.Services.AddSingleton<BotService>();
+
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
@@ -42,15 +43,15 @@ logger.LogDebug("Content Root: {r}, current {c}, base {b}",
 Directory.SetCurrentDirectory(env.ContentRootPath);
 
 // test ffmpeg load
-try
-{
-    var version = ffmpeg.av_version_info();
-    logger.LogInformation("Load ffmpeg version {v}", version ?? "unknown");
-}
-catch (NotSupportedException e)
-{
-    logger.LogCritical(e, "Failed to load ffmpeg, exit.");
-    return;
-}
+//try
+//{
+//    var version = ffmpeg.av_version_info();
+//    logger.LogInformation("Load ffmpeg version {v}", version ?? "unknown");
+//}
+//catch (NotSupportedException e)
+//{
+//    logger.LogCritical(e, "Failed to load ffmpeg, exit.");
+//    return;
+//}
 
 host.Run();

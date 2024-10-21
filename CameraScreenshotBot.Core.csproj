@@ -11,7 +11,6 @@
 		<ProduceReferenceAssembly>False</ProduceReferenceAssembly>
 		<AssemblyVersion>8.1.0.3</AssemblyVersion>
 		<FileVersion>8.1.0.3</FileVersion>
-		<RootNamespace>App.WindowsService</RootNamespace>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -28,5 +27,6 @@
 		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.5" />
+		<PackageReference Include="QRCoder" Version="1.6.0" />
 	</ItemGroup>
 </Project>
