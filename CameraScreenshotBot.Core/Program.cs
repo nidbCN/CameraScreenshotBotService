@@ -25,8 +25,8 @@ ffmpeg.RootPath =
     streamConfig?.FfmpegRoot;
 
 builder.Services.AddSingleton<CaptureService>();
-builder.Services.AddIsoStorage();
-builder.Services.AddBot(() => builder.Configuration
+builder.Services.AddIsoStorages();
+builder.Services.AddBots(() => builder.Configuration
     .GetSection(nameof(BotOption))
     .Get<BotOption>() ?? new BotOption());
 builder.Services.AddHostedService<Worker>();

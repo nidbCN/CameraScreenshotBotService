@@ -1,14 +1,11 @@
 using System.IO.IsolatedStorage;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Unicode;
 using CameraScreenshotBot.Core.Configs;
 using CameraScreenshotBot.Core.Services;
 using Lagrange.Core;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
@@ -74,7 +71,7 @@ public class Worker(ILogger<Worker> logger,
 
             logger.LogInformation("Open link `{url}` and scan the QRCode to login.", link);
 
-            // use external stopping token and a login timeout token.
+            // Use both external stopping token and login timeout token.
             using var loginStoppingTokenSrc = CancellationTokenSource
                 .CreateLinkedTokenSource(stoppingToken, loginTimeoutTokenSrc.Token);
 
@@ -190,10 +187,5 @@ public class Worker(ILogger<Worker> logger,
     {
         await LoginAsync(stoppingToken);
         ConfigureEvents();
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-        }
     }
 }

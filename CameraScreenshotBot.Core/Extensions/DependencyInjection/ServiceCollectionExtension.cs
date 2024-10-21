@@ -8,14 +8,14 @@ namespace CameraScreenshotBot.Core.Extensions.DependencyInjection;
 
 public static class ServiceCollectionExtension
 {
-    public static void AddIsoStorage(this IServiceCollection services)
+    public static void AddIsoStorages(this IServiceCollection services)
     {
         services.AddSingleton(IsolatedStorageFile.GetStore(
                 IsolatedStorageScope.User | IsolatedStorageScope.Application, null, null)
             );
     }
 
-    public static void AddBot(this IServiceCollection services, Func<BotOption> config)
+    public static void AddBots(this IServiceCollection services, Func<BotOption> config)
     {
         var botOption = config.Invoke();
         var isoStore = IsolatedStorageFile.GetStore(
