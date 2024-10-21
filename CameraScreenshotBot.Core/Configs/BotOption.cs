@@ -1,4 +1,4 @@
-﻿namespace CameraScreenshotBotService.Configs;
+﻿namespace CameraScreenshotBot.Core.Configs;
 
 public class BotOption
 {

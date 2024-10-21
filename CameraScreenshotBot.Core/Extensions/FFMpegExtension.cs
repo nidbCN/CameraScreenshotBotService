@@ -1,7 +1,7 @@
-﻿using FFmpeg.AutoGen;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
+using FFmpeg.AutoGen;
 
-namespace CameraScreenshotBotService.Extensions;
+namespace CameraScreenshotBot.Core.Extensions;
 public static class FFMpegExtension
 {
     public static unsafe string? av_strerror(int error)

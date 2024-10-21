@@ -2,7 +2,7 @@
 using Lagrange.Core.Event;
 using Lagrange.Core.Message;
 
-namespace CameraScreenshotBotService.Services.Bot;
+namespace CameraScreenshotBot.Core.Services.Bot;
 
 public class MessagePipe
 {

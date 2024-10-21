@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace App.WindowsService.Extensions.DependencyInjection
+﻿namespace CameraScreenshotBot.Core.Extensions.DependencyInjection
 {
     public static class Bot
     {
