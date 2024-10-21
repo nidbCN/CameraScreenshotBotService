@@ -1,8 +1,8 @@
-﻿using Lagrange.Core.Common;
-using System.IO.IsolatedStorage;
+﻿using System.IO.IsolatedStorage;
 using System.Text.Json;
+using Lagrange.Core.Common;
 
-namespace CameraScreenshotBotService.Services;
+namespace CameraScreenshotBot.Core.Services;
 
 public class IsoStoreService(ILogger<IsoStoreService> logger)
 {

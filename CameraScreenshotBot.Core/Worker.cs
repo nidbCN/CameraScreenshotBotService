@@ -1,15 +1,15 @@
-using CameraScreenshotBotService.Services;
-using Lagrange.Core.Common.Interface.Api;
-using Lagrange.Core.Message;
-using Lagrange.Core.Message.Entity;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
+using CameraScreenshotBot.Core.Services;
 using Lagrange.Core;
+using Lagrange.Core.Common.Interface.Api;
+using Lagrange.Core.Message;
+using Lagrange.Core.Message.Entity;
 using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
-namespace CameraScreenshotBotService;
+namespace CameraScreenshotBot.Core;
 
 public class Worker(ILogger<Worker> logger,
     CaptureService captureService,

@@ -1,7 +1,7 @@
-using CameraScreenshotBotService;
-using CameraScreenshotBotService.Services;
+using CameraScreenshotBot.Core;
+using CameraScreenshotBot.Core.Configs;
+using CameraScreenshotBot.Core.Services;
 using FFmpeg.AutoGen;
-using CameraScreenshotBotService.Configs;
 
 DynamicallyLoadedBindings.Initialize();
 
