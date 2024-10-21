@@ -81,6 +81,4 @@ public class BotService(
         Bot?.Dispose();
         GC.SuppressFinalize(this);
     }
-
-
 }

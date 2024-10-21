@@ -1,5 +1,6 @@
 using CameraScreenshotBot.Core;
 using CameraScreenshotBot.Core.Configs;
+using CameraScreenshotBot.Core.Extensions.DependencyInjection;
 using CameraScreenshotBot.Core.Services;
 using FFmpeg.AutoGen;
 
@@ -23,10 +24,11 @@ var streamConfig = builder.Configuration.GetSection(nameof(StreamOption))
 ffmpeg.RootPath =
     streamConfig?.FfmpegRoot;
 
-builder.Services.AddSingleton<IsoStoreService>();
 builder.Services.AddSingleton<CaptureService>();
-builder.Services.AddSingleton<BotService>();
-
+builder.Services.AddIsoStorage();
+builder.Services.AddBot(() => builder.Configuration
+    .GetSection(nameof(BotOption))
+    .Get<BotOption>() ?? new BotOption());
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();

@@ -1,11 +1,14 @@
+using System.IO.IsolatedStorage;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
+using CameraScreenshotBot.Core.Configs;
 using CameraScreenshotBot.Core.Services;
 using Lagrange.Core;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
 using Lagrange.Core.Message.Entity;
+using Microsoft.Extensions.Options;
 using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
@@ -13,7 +16,9 @@ namespace CameraScreenshotBot.Core;
 
 public class Worker(ILogger<Worker> logger,
     CaptureService captureService,
-    BotService botService) : BackgroundService
+    BotContext botCtx,
+    IsolatedStorageFile isoStorage,
+    IOptions<BotOption> botOptions) : BackgroundService
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions = new()
     {
@@ -53,9 +58,41 @@ public class Worker(ILogger<Worker> logger,
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await botService.LoginAsync(stoppingToken);
+        var loggedIn = await botCtx.LoginByPassword(stoppingToken);
+        if (!loggedIn)
+        {
+            logger.LogWarning("Failed to login by password, try QRCode.");
 
-        botService.Invoker!.OnBotLogEvent += (_, @event) =>
+            var (url, _) = await botCtx.FetchQrCode()
+                           ?? throw new ApplicationException(message: "Fetch QRCode failed.");
+
+            var loginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            
+            var link = new UriBuilder("https://util-functions.azurewebsites.net/api/QrCode")
+            {
+                Query = await new FormUrlEncodedContent(
+                    new Dictionary<string, string> {
+                        {"content", url}
+                    }).ReadAsStringAsync(stoppingToken)
+            };
+
+            logger.LogInformation("Open link `{url}` and scan the QRCode to login.", link);
+
+            // use external stopping token and a login timeout token.
+            using var loginStoppingTokenSrc = CancellationTokenSource
+                .CreateLinkedTokenSource(stoppingToken, loginTimeoutTokenSrc.Token);
+
+            await botCtx.LoginByQrCode(loginStoppingTokenSrc.Token);
+
+            // save device info and keystore
+            await using var deviceInfoFileStream =  isoStorage.OpenFile(botOptions.Value.DeviceInfoFile, FileMode.OpenOrCreate, FileAccess.Write);
+            await JsonSerializer.SerializeAsync(deviceInfoFileStream, botCtx.UpdateDeviceInfo(), cancellationToken: stoppingToken);
+
+            await using var keyFileStream = isoStorage.OpenFile(botOptions.Value.KeyStoreFile, FileMode.OpenOrCreate, FileAccess.Write);
+            await JsonSerializer.SerializeAsync(keyFileStream, botCtx.UpdateKeystore(), cancellationToken: stoppingToken);
+        }
+
+        botCtx.Invoker.OnBotLogEvent += (_, @event) =>
         {
             using (logger.BeginScope($"[{nameof(Lagrange.Core)}]"))
             {
@@ -72,7 +109,7 @@ public class Worker(ILogger<Worker> logger,
             }
         };
 
-        botService.Invoker.OnBotCaptchaEvent += (bot, @event) =>
+        botCtx.Invoker.OnBotCaptchaEvent += (bot, @event) =>
         {
             logger.LogWarning("Need captcha, url: {msg}", @event.Url);
             logger.LogInformation("Input response json string:");
@@ -116,12 +153,12 @@ public class Worker(ILogger<Worker> logger,
             }
         };
 
-        botService.Invoker.OnBotOnlineEvent += (_, _) =>
+        botCtx.Invoker.OnBotOnlineEvent += (_, _) =>
         {
             logger.LogInformation("Login Success!");
         };
 
-        botService.Invoker.OnGroupMessageReceived += async (bot, @event) =>
+        botCtx.Invoker.OnGroupMessageReceived += async (bot, @event) =>
         {
             var receivedMessage = @event.Chain;
 
@@ -142,7 +179,7 @@ public class Worker(ILogger<Worker> logger,
             await SendCaptureMessage(sendMessage, bot);
         };
 
-        botService.Invoker.OnFriendMessageReceived += async (bot, @event) =>
+        botCtx.Invoker.OnFriendMessageReceived += async (bot, @event) =>
         {
             var receivedMessage = @event.Chain;
 
