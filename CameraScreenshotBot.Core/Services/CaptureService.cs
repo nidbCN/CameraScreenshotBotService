@@ -1,11 +1,10 @@
-﻿using System.Runtime.InteropServices;
-using CameraScreenshotBot.Core.Configs;
-using CameraScreenshotBot.Core.Extensions;
-using CameraScreenshotBot.Core.Utils;
+﻿using CameraCaptureBot.Core.Configs;
+using CameraCaptureBot.Core.Extensions;
+using CameraCaptureBot.Core.Utils;
 using FFmpeg.AutoGen;
 using Microsoft.Extensions.Options;
 
-namespace CameraScreenshotBot.Core.Services;
+namespace CameraCaptureBot.Core.Services;
 
 public readonly unsafe struct AvCodecContextWrapper(AVCodecContext* ctx)
 {

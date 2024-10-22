@@ -1,4 +1,4 @@
-﻿namespace CameraScreenshotBot.Core.Configs;
+﻿namespace CameraCaptureBot.Core.Configs;
 
 public class StreamOption
 {

@@ -1,7 +1,7 @@
 using System.IO.IsolatedStorage;
 using System.Text.Json;
-using CameraScreenshotBot.Core.Configs;
-using CameraScreenshotBot.Core.Services;
+using CameraCaptureBot.Core.Configs;
+using CameraCaptureBot.Core.Services;
 using Lagrange.Core;
 using Lagrange.Core.Common.Interface.Api;
 using Lagrange.Core.Message;
@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 using BotLogLevel = Lagrange.Core.Event.EventArg.LogLevel;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
-namespace CameraScreenshotBot.Core;
+namespace CameraCaptureBot.Core;
 
 public class Worker(ILogger<Worker> logger,
     CaptureService captureService,

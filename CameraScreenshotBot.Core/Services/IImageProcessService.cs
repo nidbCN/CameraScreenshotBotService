@@ -1,6 +1,6 @@
 ﻿using FFmpeg.AutoGen;
 
-namespace CameraScreenshotBot.Core.Services.Capture;
+namespace CameraCaptureBot.Core.Services;
 
 public interface IImageProcessService
 {

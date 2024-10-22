@@ -1,6 +1,6 @@
 ﻿using Lagrange.Core.Common;
 
-namespace CameraScreenshotBot.Core.Configs;
+namespace CameraCaptureBot.Core.Configs;
 
 public class BotOption
 {

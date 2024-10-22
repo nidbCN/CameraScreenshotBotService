@@ -1,10 +1,10 @@
-﻿using Lagrange.Core.Common.Interface;
-using Lagrange.Core.Common;
-using System.IO.IsolatedStorage;
+﻿using System.IO.IsolatedStorage;
 using System.Text.Json;
-using CameraScreenshotBot.Core.Configs;
+using CameraCaptureBot.Core.Configs;
+using Lagrange.Core.Common;
+using Lagrange.Core.Common.Interface;
 
-namespace CameraScreenshotBot.Core.Extensions.DependencyInjection;
+namespace CameraCaptureBot.Core.Extensions.DependencyInjection;
 
 public static class ServiceCollectionExtension
 {

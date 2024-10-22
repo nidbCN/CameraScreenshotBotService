@@ -1,9 +1,9 @@
 ﻿using System.Runtime.InteropServices;
-using CameraScreenshotBot.Core.Services;
-using CameraScreenshotBot.Core.Extensions;
+using CameraCaptureBot.Core.Extensions;
+using CameraCaptureBot.Core.Services;
 using FFmpeg.AutoGen;
 
-namespace CameraScreenshotBot.Core.Utils
+namespace CameraCaptureBot.Core.Utils
 {
     public static class FfMpegUtils
     {

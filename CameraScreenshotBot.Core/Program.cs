@@ -1,9 +1,9 @@
-using CameraScreenshotBot.Core;
-using CameraScreenshotBot.Core.Configs;
-using CameraScreenshotBot.Core.Extensions.DependencyInjection;
-using CameraScreenshotBot.Core.Services;
 using FFmpeg.AutoGen;
 using System.Runtime.InteropServices;
+using CameraCaptureBot.Core;
+using CameraCaptureBot.Core.Configs;
+using CameraCaptureBot.Core.Extensions.DependencyInjection;
+using CameraCaptureBot.Core.Services;
 
 DynamicallyLoadedBindings.Initialize();
 

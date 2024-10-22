@@ -1,7 +1,7 @@
-﻿using CameraScreenshotBot.Core.Extensions;
+﻿using CameraCaptureBot.Core.Extensions;
 using FFmpeg.AutoGen;
 
-namespace CameraScreenshotBot.Core.Workers;
+namespace CameraCaptureBot.Core.Workers;
 
 public sealed class VideoStreamWorker : BackgroundService
 {

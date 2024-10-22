@@ -1,11 +1,11 @@
 ﻿using System.Text.Json;
-using CameraScreenshotBot.Core.Configs;
-using CameraScreenshotBot.Core.Extensions;
-using CameraScreenshotBot.Core.Utils;
+using CameraCaptureBot.Core.Configs;
+using CameraCaptureBot.Core.Extensions;
+using CameraCaptureBot.Core.Utils;
 using FFmpeg.AutoGen;
 using Microsoft.Extensions.Options;
 
-namespace CameraScreenshotBot.Core.Services.Capture;
+namespace CameraCaptureBot.Core.Services;
 
 public class FaceMosaicProcessService
     : IImageProcessService
@@ -75,7 +75,7 @@ public class FaceMosaicProcessService
 
     public unsafe AVFrame* ScaleFrameUnsafe(AVFrame* inputFrame, int targetWidth, int targetHeight)
     {
-        
+
         throw new NotImplementedException();
     }
 
