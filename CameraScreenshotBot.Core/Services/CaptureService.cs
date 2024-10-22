@@ -27,8 +27,6 @@ public sealed class CaptureService : IDisposable
     private readonly unsafe AVFrame* _webpOutputFrame = ffmpeg.av_frame_alloc();
     private readonly unsafe AVPacket* _packet = ffmpeg.av_packet_alloc();
 
-    private av_log_set_callback_callback _logCallback;
-
     private readonly int _streamIndex;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly CancellationTokenSource _codecCancellationToken;
@@ -44,7 +42,6 @@ public sealed class CaptureService : IDisposable
     public unsafe CaptureService(ILogger<CaptureService> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
-        _logCallback = FfmpegLogInvoke;
         _streamOption = option.Value;
 
         if (_streamOption.Url is null)
@@ -117,81 +114,6 @@ public sealed class CaptureService : IDisposable
                     .ThrowExceptionIfError();
             });
         #endregion
-
-        // 设置日志
-        if (option.Value.LogLevel is null) return;
-        var level = option.Value.LogLevel.ToUpper() switch
-        {
-            "TRACE" => ffmpeg.AV_LOG_TRACE,
-            "VERBOSE" => ffmpeg.AV_LOG_VERBOSE,
-            "DEBUG" => ffmpeg.AV_LOG_DEBUG,
-            "INFO" => ffmpeg.AV_LOG_INFO,
-            "WARNING" => ffmpeg.AV_LOG_WARNING,
-            "ERROR" => ffmpeg.AV_LOG_ERROR,
-            "FATAL" => ffmpeg.AV_LOG_FATAL,
-            "PANIC" => ffmpeg.AV_LOG_PANIC,
-            _ => ffmpeg.AV_LOG_INFO,
-        };
-
-        ffmpeg.av_log_set_level(level);
-        ffmpeg.av_log_set_callback(_logCallback);
-    }
-
-    /// <summary>
-    /// ffmpeg 日志回调
-    /// </summary>
-    /// <param name="p0"></param>
-    /// <param name="level"></param>
-    /// <param name="format"></param>
-    /// <param name="vl"></param>
-    private unsafe void FfmpegLogInvoke(void* p0, int level, string format, byte* vl)
-    {
-        if (level > ffmpeg.av_log_get_level()) return;
-
-        const int lineSize = 128;
-        var lineBuffer = stackalloc byte[lineSize];
-        var printPrefix = ffmpeg.AV_LOG_SKIP_REPEATED | ffmpeg.AV_LOG_PRINT_LEVEL;
-
-        ffmpeg.av_log_format_line(p0, level, format, vl, lineBuffer, lineSize, &printPrefix);
-        var line = Marshal.PtrToStringAnsi((IntPtr)lineBuffer);
-
-        if (line is null) return;
-
-        line = line.ReplaceLineEndings();
-
-        using (_logger.BeginScope($"[{nameof(ffmpeg)}]"))
-        {
-            switch (level)
-            {
-                case ffmpeg.AV_LOG_PANIC:
-                    _logger.LogCritical("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_FATAL:
-                    _logger.LogCritical("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_ERROR:
-                    _logger.LogError("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_WARNING:
-                    _logger.LogWarning("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_INFO:
-                    _logger.LogInformation("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_VERBOSE:
-                    _logger.LogInformation("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_DEBUG:
-                    _logger.LogDebug("{msg}", line);
-                    break;
-                case ffmpeg.AV_LOG_TRACE:
-                    _logger.LogTrace("{msg}", line);
-                    break;
-                default:
-                    _logger.LogWarning("[level {level}]{msg}", level, line);
-                    break;
-            }
-        }
     }
 
     private unsafe void OpenInput()
@@ -298,7 +220,7 @@ public sealed class CaptureService : IDisposable
                 do
                 {
                     // 如果发送失败，尝试清除堵塞的输出缓冲区重试发送
-                    _logger.LogWarning("Packet send failed with '{msg}', clean output buffer and try again.", FFMpegExtension.av_strerror(sendResult));
+                    _logger.LogWarning("Packet send failed with '{msg}', clean output buffer and try again.", FfMpegExtension.av_strerror(sendResult));
 
                     FlushDecoderBufferUnsafe();
                     _logger.LogDebug("Try send packet to decoder.");
@@ -312,7 +234,7 @@ public sealed class CaptureService : IDisposable
             else
             {
                 // 无法处理的发送失败
-                _logger.LogError("Packet sent failed with '{msg}', return.", FFMpegExtension.av_strerror(sendResult));
+                _logger.LogError("Packet sent failed with '{msg}', return.", FfMpegExtension.av_strerror(sendResult));
                 frame = null;
                 return false;
             }
@@ -511,7 +433,7 @@ public sealed class CaptureService : IDisposable
         if (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
         {
             // 超时并且依旧不可用
-            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(encodeResult));
+            _logger.LogError("Encode image failed! {msg}", FfMpegExtension.av_strerror(encodeResult));
             //result = false;
         }
         else if (encodeResult >= 0)

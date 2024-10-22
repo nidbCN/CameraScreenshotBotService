@@ -104,7 +104,7 @@ public class FaceMosaicProcessService
         if (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
         {
             // 超时并且依旧不可用
-            _logger.LogError("Encode image failed! {msg}", FFMpegExtension.av_strerror(encodeResult));
+            _logger.LogError("Encode image failed! {msg}", FfMpegExtension.av_strerror(encodeResult));
             //result = false;
         }
         else if (encodeResult >= 0)

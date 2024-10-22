@@ -2,7 +2,7 @@
 using FFmpeg.AutoGen;
 
 namespace CameraScreenshotBot.Core.Extensions;
-public static class FFMpegExtension
+public static class FfMpegExtension
 {
     public static unsafe string? av_strerror(int error)
     {
