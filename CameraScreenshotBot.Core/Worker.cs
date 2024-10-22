@@ -92,16 +92,23 @@ public class Worker(ILogger<Worker> logger,
                    ? "Friend" + recMessage.FriendUin
                    : "Group" + recMessage.GroupUin))
         {
-            logger.LogInformation("Received: {msg}", recMessage.ToPreviewText());
+            try
+            {
+                logger.LogInformation("Received: {msg}", recMessage.ToPreviewText());
 
-            var textMessages = recMessage
-                .Select(m => m as TextEntity)
-                .Where(m => m != null);
+                var textMessages = recMessage
+                    .Select(m => m as TextEntity)
+                    .Where(m => m != null);
 
-            if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
-                return;
+                if (!textMessages.Any(m => m!.Text.StartsWith("让我看看")))
+                    return;
 
-            await SendCaptureMessage(sendMessage, thisBot);
+                await SendCaptureMessage(sendMessage, thisBot);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Failed to process message.");
+            }
         }
     }
 
@@ -183,9 +190,13 @@ public class Worker(ILogger<Worker> logger,
             await ProcessMessage(@event.Chain, bot, MessageBuilder.Friend(@event.Chain.FriendUin));
         };
     }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await LoginAsync(stoppingToken);
         ConfigureEvents();
+
+        //new ManualResetEvent(false).WaitOne();
+
     }
 }

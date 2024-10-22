@@ -1,6 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using CameraScreenshotBot.Core.Configs;
 using CameraScreenshotBot.Core.Extensions;
+using CameraScreenshotBot.Core.Utils;
 using FFmpeg.AutoGen;
 using Microsoft.Extensions.Options;
 
@@ -69,7 +70,7 @@ public sealed class CaptureService : IDisposable
             .ThrowExceptionIfError();
 
         // 创建解码器
-        _decoderCtx = CreateCodecCtx(decoder, codec =>
+        _decoderCtx = FfMpegUtils.CreateCodecCtx(decoder, codec =>
         {
             ffmpeg.avcodec_parameters_to_context(codec.Value, _inputFormatCtx->streams[_streamIndex]->codecpar)
                 .ThrowExceptionIfError();
@@ -102,7 +103,7 @@ public sealed class CaptureService : IDisposable
         #endregion
 
         #region 初始化图片编码器
-        _webpEncoderCtx = CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
+        _webpEncoderCtx = FfMpegUtils.CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
             {
                 config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
                 config.Value->gop_size = 1;
@@ -250,7 +251,7 @@ public sealed class CaptureService : IDisposable
     /// </summary>
     /// <param name="frame">帧指针，指向_frame或null</param>
     /// <returns></returns>
-    public unsafe bool TryDecodeNextFrame(out AVFrame* frame)
+    public unsafe bool TryDecodeNextFrameUnsafe(out AVFrame* frame)
     {
         while (true)
         {
@@ -365,52 +366,6 @@ public sealed class CaptureService : IDisposable
         return true;
     }
 
-    #region 创建编码器
-    /// <summary>
-    /// 创建编解码器
-    /// </summary>
-    /// <param name="codecId">编解码器ID</param>
-    /// <param name="config">配置</param>
-    /// <param name="pixelFormat">像素格式</param>
-    /// <returns>编解码器上下文</returns>
-    private unsafe AVCodecContext* CreateCodecCtx(AVCodecID codecId, Action<AvCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
-    {
-        var codec = ffmpeg.avcodec_find_encoder(codecId);
-
-        return CreateCodecCtx(codec, ctx =>
-        {
-            ctx.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
-            config?.Invoke(ctx);
-        });
-    }
-
-    private unsafe AVCodecContext* CreateCodecCtx(string codecName, Action<AvCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
-    {
-        var codec = ffmpeg.avcodec_find_encoder_by_name(codecName);
-
-        return CreateCodecCtx(codec, ctx =>
-        {
-            ctx.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
-            config?.Invoke(ctx);
-        });
-    }
-
-    private unsafe AVCodecContext* CreateCodecCtx(AVCodec* codec, Action<AvCodecContextWrapper>? config = null)
-    {
-        // 编解码器
-        var ctx = ffmpeg.avcodec_alloc_context3(codec);
-
-        ctx->time_base = new() { num = 1, den = 25 }; // 设置时间基准
-        ctx->framerate = new() { num = 25, den = 1 };
-
-        config?.Invoke(new(ctx));
-
-        ffmpeg.avcodec_open2(ctx, codec, null).ThrowExceptionIfError();
-
-        return ctx;
-    }
-    #endregion
-
     /// <summary>
     /// 丢弃解码器结果中所有的帧（异步）
     /// </summary>
@@ -496,7 +451,7 @@ public sealed class CaptureService : IDisposable
                 {
                     OpenInput();
 
-                    if (!TryDecodeNextFrame(out var decodedFrame))
+                    if (!TryDecodeNextFrameUnsafe(out var decodedFrame))
                     {
                         if (decodedFrame != null)
                         {
@@ -563,7 +518,7 @@ public sealed class CaptureService : IDisposable
         {
             //正常接收到数据
             _logger.LogInformation("Save packet with size {s} to buffer.", _packet->size);
-            WriteToStream(memStream, _packet);
+            FfMpegUtils.WriteToStream(memStream, _packet);
             //  result = true;
 
             while (encodeResult != ffmpeg.AVERROR_EOF)
@@ -572,7 +527,7 @@ public sealed class CaptureService : IDisposable
                 if (_packet->size != 0)
                 {
                     _logger.LogInformation("Continue received packet, save {s} to buffer.", _packet->size);
-                    WriteToStream(memStream, _packet);
+                    FfMpegUtils.WriteToStream(memStream, _packet);
                 }
                 else
                 {
@@ -586,7 +541,7 @@ public sealed class CaptureService : IDisposable
             if (_packet->size != 0)
             {
                 _logger.LogInformation("Received EOF, save {s} to buffer.", _packet->size);
-                WriteToStream(memStream, _packet);
+                FfMpegUtils.WriteToStream(memStream, _packet);
             }
             else
             {
@@ -602,12 +557,5 @@ public sealed class CaptureService : IDisposable
         memStream.Close();
 
         return false;
-    }
-
-    private static unsafe void WriteToStream(Stream stream, AVPacket* packet)
-    {
-        var buffer = new byte[packet->size];
-        Marshal.Copy((IntPtr)packet->data, buffer, 0, packet->size);
-        stream.Write(buffer, 0, packet->size);
     }
 }
