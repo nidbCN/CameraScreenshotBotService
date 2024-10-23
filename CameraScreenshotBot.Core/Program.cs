@@ -18,6 +18,7 @@ builder.Services.Configure<StreamOption>(
 builder.Services.Configure<BotOption>(
     builder.Configuration.GetSection(nameof(BotOption)));
 
+builder.Services.AddSingleton<FfmpegLoggerService>();
 builder.Services.AddSingleton<CaptureService>();
 builder.Services.AddIsoStorages();
 builder.Services.AddBots(() => builder.Configuration
