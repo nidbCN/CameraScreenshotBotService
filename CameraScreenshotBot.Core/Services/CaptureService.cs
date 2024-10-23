@@ -78,7 +78,7 @@ public sealed class CaptureService : IDisposable
         ctx->time_base = new() { num = 1, den = 25 }; // 设置时间基准
         ctx->framerate = new() { num = 25, den = 1 };
 
-        config?.Invoke(new(ctx));
+        config?.Invoke(new AvCodecContextWrapper(ctx));
 
         ffmpeg.avcodec_open2(ctx, codec, null).ThrowExceptionIfError();
 
