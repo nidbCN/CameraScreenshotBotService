@@ -3,18 +3,12 @@ using CameraCaptureBot.Core.Extensions;
 using CameraCaptureBot.Core.Utils;
 using FFmpeg.AutoGen;
 using Microsoft.Extensions.Options;
-using System.Runtime.InteropServices;
 
 namespace CameraCaptureBot.Core.Services;
 
-public readonly unsafe struct AvCodecContextWrapper(AVCodecContext* ctx)
+public sealed class Capture2Service : IDisposable
 {
-    public AVCodecContext* Value { get; } = ctx;
-}
-
-public sealed class CaptureService : IDisposable
-{
-    private readonly ILogger<CaptureService> _logger;
+    private readonly ILogger<Capture2Service> _logger;
     private readonly StreamOption _streamOption;
 
     private readonly unsafe AVCodecContext* _decoderCtx;
@@ -39,61 +33,7 @@ public sealed class CaptureService : IDisposable
     public int StreamHeight { get; }
     public int StreamWidth { get; }
 
-
-    #region 创建编码器
-    /// <summary>
-    /// 创建编解码器
-    /// </summary>
-    /// <param name="codecId">编解码器ID</param>
-    /// <param name="config">配置</param>
-    /// <param name="pixelFormat">像素格式</param>
-    /// <returns>编解码器上下文</returns>
-    public static unsafe AVCodecContext* CreateCodecCtx(AVCodecID codecId, Action<AvCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
-    {
-        var codec = ffmpeg.avcodec_find_encoder(codecId);
-
-        return CreateCodecCtx(codec, ctx =>
-        {
-            ctx.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
-            config?.Invoke(ctx);
-        });
-    }
-
-    public static unsafe AVCodecContext* CreateCodecCtx(string codecName, Action<AvCodecContextWrapper>? config = null, AVPixelFormat? pixelFormat = null)
-    {
-        var codec = ffmpeg.avcodec_find_encoder_by_name(codecName);
-
-        return CreateCodecCtx(codec, innerConfig =>
-        {
-            innerConfig.Value->pix_fmt = pixelFormat ?? codec->pix_fmts[0];
-            config?.Invoke(innerConfig);
-        });
-    }
-
-    public static unsafe AVCodecContext* CreateCodecCtx(AVCodec* codec, Action<AvCodecContextWrapper>? config = null)
-    {
-        // 编解码器
-        var ctx = ffmpeg.avcodec_alloc_context3(codec);
-
-        ctx->time_base = new() { num = 1, den = 25 }; // 设置时间基准
-        ctx->framerate = new() { num = 25, den = 1 };
-
-        config?.Invoke(new(ctx));
-
-        ffmpeg.avcodec_open2(ctx, codec, null).ThrowExceptionIfError();
-
-        return ctx;
-    }
-    #endregion
-
-    public static unsafe void WriteToStream(Stream stream, AVPacket* packet)
-    {
-        var buffer = new byte[packet->size];
-        Marshal.Copy((IntPtr)packet->data, buffer, 0, packet->size);
-        stream.Write(buffer, 0, packet->size);
-    }
-
-    public unsafe CaptureService(ILogger<CaptureService> logger, IOptions<StreamOption> option)
+    public unsafe Capture2Service(ILogger<Capture2Service> logger, IOptions<StreamOption> option)
     {
         _logger = logger;
         _streamOption = option.Value;
@@ -121,7 +61,7 @@ public sealed class CaptureService : IDisposable
             .ThrowExceptionIfError();
 
         // 创建解码器
-        _decoderCtx = CreateCodecCtx(decoder, codec =>
+        _decoderCtx = FfMpegUtils.CreateCodecCtx(decoder, codec =>
         {
             ffmpeg.avcodec_parameters_to_context(codec.Value, _inputFormatCtx->streams[_streamIndex]->codecpar)
                 .ThrowExceptionIfError();
@@ -153,21 +93,7 @@ public sealed class CaptureService : IDisposable
         CloseInput();
         #endregion
 
-        #region 初始化图片编码器
-        _webpEncoderCtx = CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
-            {
-                config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
-                config.Value->gop_size = 1;
-                config.Value->thread_count = (int)_streamOption.CodecThreads;
-                config.Value->time_base = new() { den = 1, num = 1000 };
-                config.Value->flags |= ffmpeg.AV_CODEC_FLAG_COPY_OPAQUE;
-                config.Value->width = StreamWidth;
-                config.Value->height = StreamHeight;
 
-                ffmpeg.av_opt_set(config.Value->priv_data, "preset", "photo", ffmpeg.AV_OPT_SEARCH_CHILDREN)
-                    .ThrowExceptionIfError();
-            });
-        #endregion
     }
 
     private unsafe void OpenInput()
@@ -494,7 +420,7 @@ public sealed class CaptureService : IDisposable
         {
             //正常接收到数据
             _logger.LogInformation("Save packet with size {s} to buffer.", _packet->size);
-            WriteToStream(memStream, _packet);
+            FfMpegUtils.WriteToStream(memStream, _packet);
             //  result = true;
 
             while (encodeResult != ffmpeg.AVERROR_EOF)
@@ -503,7 +429,7 @@ public sealed class CaptureService : IDisposable
                 if (_packet->size != 0)
                 {
                     _logger.LogInformation("Continue received packet, save {s} to buffer.", _packet->size);
-                    WriteToStream(memStream, _packet);
+                    FfMpegUtils.WriteToStream(memStream, _packet);
                 }
                 else
                 {
@@ -517,7 +443,7 @@ public sealed class CaptureService : IDisposable
             if (_packet->size != 0)
             {
                 _logger.LogInformation("Received EOF, save {s} to buffer.", _packet->size);
-                WriteToStream(memStream, _packet);
+                FfMpegUtils.WriteToStream(memStream, _packet);
             }
             else
             {
