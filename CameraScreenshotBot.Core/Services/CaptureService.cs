@@ -154,7 +154,7 @@ public sealed class CaptureService : IDisposable
         #endregion
 
         #region 初始化图片编码器
-        _webpEncoderCtx = CreateCodecCtx(AVCodecID.AV_CODEC_ID_WEBP, config =>
+        _webpEncoderCtx = CreateCodecCtx("libwebp", config =>
             {
                 config.Value->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
                 config.Value->gop_size = 1;
@@ -488,7 +488,7 @@ public sealed class CaptureService : IDisposable
         {
             // 超时并且依旧不可用
             _logger.LogError("Encode image failed! {msg}", FfMpegExtension.av_strerror(encodeResult));
-            //result = false;
+            return false;
         }
         else if (encodeResult >= 0)
         {
