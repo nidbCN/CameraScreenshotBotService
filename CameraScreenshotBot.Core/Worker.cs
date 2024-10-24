@@ -51,7 +51,13 @@ public class Worker(ILogger<Worker> logger,
     }
     private async Task LoginAsync(CancellationToken stoppingToken)
     {
-        var loggedIn = await botCtx.LoginByPassword(stoppingToken);
+        logger.LogInformation("Try login use password, timeout value: 5 sec.");
+
+        var pwdLoginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var pwdLoginTimeoutToken = CancellationTokenSource
+            .CreateLinkedTokenSource(stoppingToken, pwdLoginTimeoutTokenSrc.Token);
+
+        var loggedIn = await botCtx.LoginByPassword(pwdLoginTimeoutToken.Token);
         if (!loggedIn)
         {
             logger.LogWarning("Failed to login by password, try QRCode.");
@@ -60,7 +66,7 @@ public class Worker(ILogger<Worker> logger,
                            ?? throw new ApplicationException(message: "Fetch QRCode failed.");
 
             // The QrCode will be expired in 2 minutes.
-            var loginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            var qrLoginTimeoutTokenSrc = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
             var link = new UriBuilder("https://util-functions.azurewebsites.net/api/QrCode")
             {
@@ -73,10 +79,10 @@ public class Worker(ILogger<Worker> logger,
             logger.LogInformation("Open link `{url}` and scan the QRCode to login.", link);
 
             // Use both external stopping token and login timeout token.
-            using var loginStoppingTokenSrc = CancellationTokenSource
-                .CreateLinkedTokenSource(stoppingToken, loginTimeoutTokenSrc.Token);
+            using var qrLoginStoppingTokenSrc = CancellationTokenSource
+                .CreateLinkedTokenSource(stoppingToken, qrLoginTimeoutTokenSrc.Token);
 
-            await botCtx.LoginByQrCode(loginStoppingTokenSrc.Token);
+            await botCtx.LoginByQrCode(qrLoginStoppingTokenSrc.Token);
         }
 
         // save device info and keystore
