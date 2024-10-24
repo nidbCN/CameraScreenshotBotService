@@ -38,8 +38,9 @@ public class Worker(ILogger<Worker> logger,
         }
         catch (Exception e)
         {
-            logger.LogError("Failed to decode and encode, {error}\n{trace}", e.Message, e.StackTrace);
+            logger.LogError(e, "Failed to decode and encode.");
             message.Text("杰哥不要！（图像编解码器崩溃）");
+            message.Text("你最好不要说出去，我知道你的学校和班级：\n" + e.Message + e.StackTrace);
         }
         finally
         {
@@ -88,9 +89,10 @@ public class Worker(ILogger<Worker> logger,
 
     private async Task ProcessMessage(MessageChain recMessage, BotContext thisBot, MessageBuilder sendMessage)
     {
-        using (logger.BeginScope(recMessage.GroupUin is null
-                   ? "Friend" + recMessage.FriendUin
-                   : "Group" + recMessage.GroupUin))
+        using (logger.BeginScope(nameof(BotContext) + "."
+                                 + (recMessage.GroupUin is null
+                   ? "Friend@" + recMessage.FriendUin
+                   : "Group@" + recMessage.GroupUin)))
         {
             try
             {
@@ -116,7 +118,7 @@ public class Worker(ILogger<Worker> logger,
     {
         botCtx.Invoker.OnBotLogEvent += (_, @event) =>
         {
-            using (logger.BeginScope($"[{nameof(Lagrange.Core)}]"))
+            using (logger.BeginScope($"{nameof(BotContext)}"))
             {
                 logger.Log(@event.Level switch
                 {
@@ -197,6 +199,12 @@ public class Worker(ILogger<Worker> logger,
         ConfigureEvents();
 
         //new ManualResetEvent(false).WaitOne();
+    }
 
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        botCtx.Dispose();
+
+        return base.StopAsync(cancellationToken);
     }
 }
