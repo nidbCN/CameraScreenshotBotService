@@ -546,6 +546,7 @@ public sealed class CaptureService : IDisposable
         {
             // 超时并且依旧不可用
             _logger.LogError("Encode image failed! {msg}", FfMpegExtension.av_strerror(encodeResult));
+            image = null;
             return false;
         }
         else if (encodeResult >= 0)
