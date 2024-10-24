@@ -230,10 +230,11 @@ public sealed class CaptureService : IDisposable
     /// <returns></returns>
     public unsafe AVFrame* DecodeNextFrameUnsafe()
     {
-        using (_logger.BeginScope($"Decoder@{_decoderCtx->GetHashCode()}"))
+        using (_logger.BeginScope($"Decoder@0x{_decoderCtx->GetHashCode():X8}"))
         {
             var decodeResult = -1;
-            var timeoutTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            var timeoutTokenSource = new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(_streamOption.CodecTimeout));
 
             while (!timeoutTokenSource.Token.IsCancellationRequested)
             {
@@ -249,7 +250,7 @@ public sealed class CaptureService : IDisposable
                         if (readResult == ffmpeg.AVERROR_EOF)
                         {
                             var error = new ApplicationException(FfMpegExtension.av_strerror(readResult));
-                            const string message = "Receive EOF in stream.";
+                            const string message = "Receive EOF in stream.\n";
 
                             _logger.LogError(error, message);
                             throw new EndOfStreamException(message, error);
@@ -259,7 +260,7 @@ public sealed class CaptureService : IDisposable
                         readResult.ThrowExceptionIfError();
                     } while (_packet->stream_index != _streamIndex);
 
-                    using (_logger.BeginScope($"Packet@0x{_packet->GetHashCode():x8}"))
+                    using (_logger.BeginScope($"Packet@0x{_packet->data->GetHashCode():x8}"))
                     {
                         // 取到了 stream 中的包
                         _logger.LogDebug(
@@ -322,7 +323,7 @@ public sealed class CaptureService : IDisposable
                             var error = new ApplicationException(FfMpegExtension.av_strerror(sendResult));
 
                             // 无法处理的发送失败
-                            _logger.LogError(error, "Send packet to decoder failed.");
+                            _logger.LogError(error, "Send packet to decoder failed.\n");
 
                             throw error;
                         }
@@ -344,7 +345,7 @@ public sealed class CaptureService : IDisposable
 
                                 error = new(message);
 
-                                _logger.LogError(error, "Received EOF from decoder.");
+                                _logger.LogError(error, "Received EOF from decoder.\n");
                             }
                             else if (decodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
                             {
@@ -361,7 +362,7 @@ public sealed class CaptureService : IDisposable
                                     // 抛出异常，仅关键帧模式中，该错误不可能通过发送更多需要的包来解决
                                     error = new(message);
 
-                                    _logger.LogError(error, "Received EAGAIN from decoder.");
+                                    _logger.LogError(error, "Received EAGAIN from decoder.\n");
                                     throw error;
                                 }
 
@@ -372,7 +373,7 @@ public sealed class CaptureService : IDisposable
                             else
                             {
                                 error = new(message);
-                                _logger.LogError(error, "Uncaught error occured during decoding.");
+                                _logger.LogError(error, "Uncaught error occured during decoding.\n");
                                 throw error;
                             }
                         }
@@ -395,7 +396,7 @@ public sealed class CaptureService : IDisposable
             {
                 // 解码失败
                 var error = new TimeoutException("Decode timeout.");
-                _logger.LogError(error, "Failed to decode.");
+                _logger.LogError(error, "Failed to decode.\n");
                 throw error;
             }
 
@@ -540,7 +541,7 @@ public sealed class CaptureService : IDisposable
             _logger.LogDebug("Receive packet from encoder.");
             encodeResult = ffmpeg.avcodec_receive_packet(_webpEncoderCtx, _packet);
         } while (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN)
-                 && !ct.IsCancellationRequested);
+                 && !ct.Token.IsCancellationRequested);
 
         if (encodeResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
         {
