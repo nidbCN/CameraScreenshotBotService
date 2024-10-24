@@ -57,11 +57,18 @@ public class Worker(ILogger<Worker> logger,
         var pwdLoginTimeoutToken = CancellationTokenSource
             .CreateLinkedTokenSource(stoppingToken, pwdLoginTimeoutTokenSrc.Token);
 
-        var loggedIn = await botCtx.LoginByPassword(pwdLoginTimeoutToken.Token);
+        var loggedIn = false;
+        try
+        {
+            loggedIn = await botCtx.LoginByPassword(pwdLoginTimeoutToken.Token);
+        }
+        catch (TaskCanceledException e)
+        {
+            logger.LogError(e, "Password login timeout, try QRCode.");
+        }
+
         if (!loggedIn)
         {
-            logger.LogWarning("Failed to login by password, try QRCode.");
-
             var (url, _) = await botCtx.FetchQrCode()
                            ?? throw new ApplicationException(message: "Fetch QRCode failed.");
 
@@ -82,7 +89,15 @@ public class Worker(ILogger<Worker> logger,
             using var qrLoginStoppingTokenSrc = CancellationTokenSource
                 .CreateLinkedTokenSource(stoppingToken, qrLoginTimeoutTokenSrc.Token);
 
-            await botCtx.LoginByQrCode(qrLoginStoppingTokenSrc.Token);
+            try
+            {
+                await botCtx.LoginByQrCode(qrLoginStoppingTokenSrc.Token);
+            }
+            catch (TaskCanceledException e)
+            {
+                logger.LogError(e, "QRCode login timeout, can't boot.");
+                throw;
+            }
         }
 
         // save device info and keystore
