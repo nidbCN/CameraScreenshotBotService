@@ -32,8 +32,4 @@
 	<ItemGroup>
 	  <ProjectReference Include="..\Lagrange.Core\Lagrange.Core\Lagrange.Core.csproj" />
 	</ItemGroup>
-
-	<ItemGroup>
-	  <Folder Include="Utils\新文件夹\" />
-	</ItemGroup>
 </Project>

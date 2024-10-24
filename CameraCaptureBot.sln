@@ -3,9 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.8.34408.163
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CameraCaptureBot.Core", "CameraScreenshotBot.Core\CameraCaptureBot.Core.csproj", "{3789A3DB-6ABB-4966-AC8F-821DA758EDED}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CameraScreenshotBot.Tool", "..\CameraScreenshotBot.Tool\CameraScreenshotBot.Tool.csproj", "{92787D36-7D58-4C58-98C3-99FA2CE4DA78}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CameraCaptureBot.Core", "CameraCaptureBot.Core\CameraCaptureBot.Core.csproj", "{3789A3DB-6ABB-4966-AC8F-821DA758EDED}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Lagrange.Core", "Lagrange.Core\Lagrange.Core\Lagrange.Core.csproj", "{5C0128AF-478C-4322-8B08-D6F4D00559F0}"
 EndProject
